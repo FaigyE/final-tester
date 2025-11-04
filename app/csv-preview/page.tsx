@@ -200,21 +200,28 @@ export default function CsvPreviewPage() {
 
   // Process data and continue to report
   const handleContinue = () => {
-    if (!selectedUnitColumn) {
-      alert("Please select a unit column")
-      return
-    }
-
-    // Filter and process the data
-    const processedData = processInstallationData(rawData, selectedUnitColumn, selectedNotesColumns, selectedCells)
-
-    // Store processed data
-    localStorage.setItem("installationData", JSON.stringify(processedData.installationData))
-    localStorage.setItem("toiletCount", JSON.stringify(processedData.toiletCount))
-
-    // Navigate to report
-    router.push("/")
+  if (!selectedUnitColumn) {
+    alert("Please select a unit column")
+    return
   }
+
+  // Filter and process the data
+  const processedData = processInstallationData(rawData, selectedUnitColumn, selectedNotesColumns, selectedCells)
+
+  // Store processed data
+  localStorage.setItem("installationData", JSON.stringify(processedData.installationData))
+  
+  // DON'T overwrite the toilet count - keep the one from the upload form
+  // Only save toilet count if we found a valid one (> 0)
+  if (processedData.toiletCount > 0) {
+    localStorage.setItem("toiletCount", JSON.stringify(processedData.toiletCount))
+  } else {
+    console.log("[CSV Preview] Keeping existing toilet count from upload form")
+  }
+
+  // Navigate to report
+  router.push("/")
+}
 
   // Process installation data with selected configuration
   const processInstallationData = (

@@ -3,6 +3,7 @@
 import { useReportContext } from "@/lib/report-context"
 import EditableText from "@/components/editable-text"
 import type { CustomerInfo } from "@/lib/types"
+import { useEffect } from "react"
 
 interface ReportLetterPageProps {
   customerInfo: CustomerInfo
@@ -10,7 +11,7 @@ interface ReportLetterPageProps {
   isEditable?: boolean
 }
 
-export default function ReportLetterPage({ customerInfo, toiletCount, isEditable = true }: ReportLetterPageProps) {
+export default function ReportLetterPage({ customerInfo, toiletCount: toiletCountProp, isEditable = true }: ReportLetterPageProps) {
   const {
     letterText,
     setLetterText,
@@ -19,12 +20,22 @@ export default function ReportLetterPage({ customerInfo, toiletCount, isEditable
     signatureTitle,
     setSignatureTitle,
     setCustomerInfo,
-    // Add new editable text elements
+    toiletCount: contextToiletCount, // Get toilet count from context
     rePrefix,
     setRePrefix,
     dearPrefix,
     setDearPrefix,
   } = useReportContext()
+
+  // Use context toilet count if available, otherwise fall back to prop
+  const toiletCount = contextToiletCount > 0 ? contextToiletCount : toiletCountProp
+
+  // Debug logging
+  useEffect(() => {
+    console.log("[ReportLetterPage] Toilet count prop:", toiletCountProp)
+    console.log("[ReportLetterPage] Toilet count from context:", contextToiletCount)
+    console.log("[ReportLetterPage] Using toilet count:", toiletCount)
+  }, [toiletCountProp, contextToiletCount, toiletCount])
 
   const handleLetterTextChange = (index: number, value: string) => {
     if (isEditable) {
@@ -55,7 +66,7 @@ export default function ReportLetterPage({ customerInfo, toiletCount, isEditable
         <img
           src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Screenshot%202025-04-29%20115501-BD1uw5tVq9PtVYW6Z6FKM1i8in6GeV.png"
           alt="GreenLight Logo"
-          className="h-24" // Increased from h-16
+          className="h-24"
           crossOrigin="anonymous"
         />
       </div>
@@ -123,7 +134,6 @@ export default function ReportLetterPage({ customerInfo, toiletCount, isEditable
             <EditableText
               value={`${customerInfo.city}, ${customerInfo.state} ${customerInfo.zip}`}
               onChange={(value) => {
-                // This is a simplified approach - in a real app, you might want to parse the address
                 const parts = value.split(",")
                 if (parts.length >= 2) {
                   const locationPart = parts[1].trim().split(" ")
@@ -173,21 +183,20 @@ export default function ReportLetterPage({ customerInfo, toiletCount, isEditable
         </p>
 
         {letterText.map((originalText, index) => {
-          // Process the text to replace placeholders for display
           const displayText = originalText.replace(/\{toiletCount\}/g, toiletCount.toString())
 
           return (
             <p key={index} className="mb-4">
               {isEditable ? (
                 <EditableText
-                  value={originalText} // Edit the original text with placeholders
-                  displayValue={displayText} // Show the processed text
+                  value={originalText}
+                  displayValue={displayText}
                   onChange={(value) => handleLetterTextChange(index, value)}
                   multiline={true}
                   placeholder={`Paragraph ${index + 1}`}
                 />
               ) : (
-                displayText // Use the processed text for display
+                displayText
               )}
             </p>
           )
@@ -195,12 +204,11 @@ export default function ReportLetterPage({ customerInfo, toiletCount, isEditable
 
         <p className="mb-1">Very truly yours,</p>
 
-        {/* Add signature image */}
         <div className="my-2">
           <img
             src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/image-VtZjpVdUqjQTct2lQsw6FsvfgvFeiU.png"
             alt="Signature"
-            className="h-10 ml-1" // Reduced from h-16 to h-10
+            className="h-10 ml-1"
             crossOrigin="anonymous"
           />
         </div>
@@ -233,7 +241,6 @@ export default function ReportLetterPage({ customerInfo, toiletCount, isEditable
         </p>
       </div>
 
-      {/* Footer - full width */}
       <div className="footer-container">
         <img
           src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Screenshot%202025-04-29%20115454-uWCS2yWrowegSqw9c2SIVcLdedTk82.png"
@@ -243,7 +250,6 @@ export default function ReportLetterPage({ customerInfo, toiletCount, isEditable
         />
       </div>
 
-      {/* Page number */}
       <div className="absolute top-4 right-4 text-sm">Page 2 of 21</div>
     </div>
   )

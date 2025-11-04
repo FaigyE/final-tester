@@ -4,9 +4,10 @@ import { useReportContext } from "@/lib/report-context"
 import EditableText from "@/components/editable-text"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Plus, Trash2 } from "lucide-react"
 import { formatNote } from "@/lib/utils/aerator-helpers"
-import { getNotesAndDetails, updateStoredNote, getStoredNotes } from "@/lib/notes"
+import { getNotesAndDetails, updateStoredNote, updateStoredDetail, getStoredNotes } from "@/lib/notes"
 
 interface Note {
   unit: string
@@ -24,6 +25,8 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
   const { setNotes, sectionTitles, setSectionTitles } = useReportContext()
   // Add state to track edited notes
   const [editedNotes, setEditedNotes] = useState<Note[]>([])
+  // Add state for sync checkbox - default to true (checked)
+  const [syncNotesAndDetails, setSyncNotesAndDetails] = useState<boolean>(true)
 
   // Get installation data from localStorage directly (same as details page)
   const [installationData, setInstallationData] = useState<any[]>([])
@@ -192,12 +195,24 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
   useEffect(() => {
     console.log("Notes: Processing installation data, length:", installationData.length)
 
-    if (!installationData || installationData.length === 0) {
+    // CRITICAL: Load from localStorage first to get any deletions
+    let dataToProcess = installationData
+    try {
+      const storedData = localStorage.getItem("installationData")
+      if (storedData) {
+        dataToProcess = JSON.parse(storedData)
+        console.log("Notes: Loaded installation data from localStorage (reflects deletions):", dataToProcess.length, "items")
+      }
+    } catch (error) {
+      console.error("Notes: Error loading installation data from localStorage:", error)
+    }
+
+    if (!dataToProcess || dataToProcess.length === 0) {
       console.log("Notes: No installation data available")
       return
     }
 
-    const unitColumn = findUnitColumn(installationData)
+    const unitColumn = findUnitColumn(dataToProcess)
     console.log("Notes: Using unit column:", unitColumn)
 
     if (!unitColumn) {
@@ -226,17 +241,35 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
       console.error("Notes: Error loading selected data from preview:", error)
     }
 
+    // Load the blacklist of deleted units
+    let deletedUnitsBlacklist: string[] = []
+    try {
+      const storedBlacklist = localStorage.getItem("deletedNotesBlacklist")
+      if (storedBlacklist) {
+        deletedUnitsBlacklist = JSON.parse(storedBlacklist)
+        console.log("Notes: Loaded deleted units blacklist:", deletedUnitsBlacklist)
+      }
+    } catch (error) {
+      console.error("Notes: Error loading deleted units blacklist:", error)
+    }
+
     // Use notes/details system to get notes
     console.log("Notes: Using notes/details system...")
     const notesAndDetails = getNotesAndDetails({
-      installationData,
+      installationData: dataToProcess,
       unitColumn,
       selectedCells,
       selectedNotesColumns,
     })
 
-    // Filter to only include notes with content (for notes section)
+    // Filter to only include notes with content AND not in blacklist
     const filteredNotes = notesAndDetails.filter((note) => {
+      // Check if unit is blacklisted
+      if (deletedUnitsBlacklist.includes(note.unit)) {
+        console.log(`Notes: Filtering out blacklisted unit ${note.unit}`)
+        return false
+      }
+      
       const hasContent = note.note && note.note.trim() !== ""
       console.log(`Notes: Filtering note for unit ${note.unit}, has content: ${hasContent}, note: "${note.note}"`)
       return hasContent
@@ -250,15 +283,27 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
 
     // Also update localStorage for backward compatibility
     localStorage.setItem("reportNotes", JSON.stringify(filteredNotes))
-  }, [installationData, setNotes])
+  }, [setNotes]) // Remove installationData dependency to avoid re-running when prop changes
 
   // Listen for notes/details updates
   useEffect(() => {
     const handleNotesUpdate = () => {
       console.log("Notes: Received notes/details update event")
       // Re-process notes when notes/details are updated
-      if (installationData.length > 0) {
-        const unitColumn = findUnitColumn(installationData)
+      
+      // Load from localStorage first
+      let dataToProcess = installationData
+      try {
+        const storedData = localStorage.getItem("installationData")
+        if (storedData) {
+          dataToProcess = JSON.parse(storedData)
+        }
+      } catch (error) {
+        console.error("Notes: Error loading installation data:", error)
+      }
+      
+      if (dataToProcess.length > 0) {
+        const unitColumn = findUnitColumn(dataToProcess)
         if (unitColumn) {
           let selectedCells: Record<string, string[]> = {}
           let selectedNotesColumns: string[] = []
@@ -278,14 +323,30 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
             console.error("Notes: Error loading selected data:", error)
           }
 
+          // Load the blacklist
+          let deletedUnitsBlacklist: string[] = []
+          try {
+            const storedBlacklist = localStorage.getItem("deletedNotesBlacklist")
+            if (storedBlacklist) {
+              deletedUnitsBlacklist = JSON.parse(storedBlacklist)
+            }
+          } catch (error) {
+            console.error("Notes: Error loading deleted units blacklist:", error)
+          }
+
           const notesAndDetails = getNotesAndDetails({
-            installationData,
+            installationData: dataToProcess,
             unitColumn,
             selectedCells,
             selectedNotesColumns,
           })
 
           const filteredNotes = notesAndDetails.filter((note) => {
+            // Check blacklist
+            if (deletedUnitsBlacklist.includes(note.unit)) {
+              return false
+            }
+            
             const hasContent = note.note && note.note.trim() !== ""
             return hasContent
           })
@@ -303,32 +364,31 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
 
   // Filter out notes without valid unit numbers - use editedNotes directly for reactivity
   const filteredNotes = editedNotes.filter((note) => {
-    // In editable mode, allow empty notes so users can edit them
-    if (isEditable) {
-      return true
-    }
+    if (isEditable) return true;
+    if (!note.unit || note.unit.trim() === "") return false;
+    const lowerUnit = note.unit.toLowerCase();
+    const invalidValues = ["total", "sum", "average", "avg", "count", "header"];
+    if (invalidValues.some((val) => lowerUnit.includes(val))) return false;
+    return note.note && note.note.trim() !== "";
+  });
 
-    // In non-editable mode, filter out empty notes
-    if (!note.unit || note.unit.trim() === "") {
-      return false
+  // Sort notes by unit ascending
+  const sortedNotes = [...filteredNotes].sort((a, b) => {
+    const unitA = a.unit || "";
+    const unitB = b.unit || "";
+    const numA = Number.parseInt(unitA);
+    const numB = Number.parseInt(unitB);
+    if (!isNaN(numA) && !isNaN(numB)) {
+      return numA - numB;
     }
-
-    const lowerUnit = note.unit.toLowerCase()
-    const invalidValues = ["total", "sum", "average", "avg", "count", "header"]
-    if (invalidValues.some((val) => lowerUnit.includes(val))) {
-      return false
-    }
-
-    // Only show notes with content in non-editable mode
-    return note.note && note.note.trim() !== ""
-  })
+    return unitA.localeCompare(unitB, undefined, { numeric: true, sensitivity: "base" });
+  });
 
   // Split notes into pages of 15 items each
-  const notesPerPage = 15
-  const notePages = []
-
-  for (let i = 0; i < filteredNotes.length; i += notesPerPage) {
-    notePages.push(filteredNotes.slice(i, i + notesPerPage))
+  const notesPerPage = 15;
+  const notePages = [];
+  for (let i = 0; i < sortedNotes.length; i += notesPerPage) {
+    notePages.push(sortedNotes.slice(i, i + notesPerPage));
   }
 
   // Add function to sort notes by unit number
@@ -370,10 +430,16 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
           if (storedNotes[oldUnit] !== undefined) {
             // Move the note from old unit to new unit
             updateStoredNote(value, storedNotes[oldUnit])
+            
+            // If sync is enabled, also update details
+            if (syncNotesAndDetails) {
+              updateStoredDetail(value, storedNotes[oldUnit])
+            }
+            
             // Remove the old unit entry
             const updatedStoredNotes = { ...storedNotes }
             delete updatedStoredNotes[oldUnit]
-            localStorage.setItem("unifiedNotes", JSON.stringify(updatedStoredNotes))
+            localStorage.setItem("unitNotes", JSON.stringify(updatedStoredNotes))
           }
         }
 
@@ -420,6 +486,13 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
         // Update the note content using unified system
         const unitValue = updatedNotes[index].unit
         updateStoredNote(unitValue, value)
+        
+        // If sync is enabled, also update the details
+        if (syncNotesAndDetails) {
+          updateStoredDetail(unitValue, value)
+          console.log(`Synced note to details for unit ${unitValue}`)
+        }
+        
         updatedNotes[index][field] = value
       } else {
         updatedNotes[index][field] = value
@@ -463,35 +536,54 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
   const handleDeleteNote = (index: number) => {
     if (isEditable) {
       const noteToDelete = editedNotes[index]
+      const unitToDelete = noteToDelete.unit
       const updatedNotes = editedNotes.filter((_, i) => i !== index)
 
-      // Remove from unified notes storage
-      if (noteToDelete.unit) {
-        const storedNotes = getStoredNotes()
-        const updatedStoredNotes = { ...storedNotes }
-        delete updatedStoredNotes[noteToDelete.unit]
-        localStorage.setItem("unifiedNotes", JSON.stringify(updatedStoredNotes))
+      console.log(`Deleting note for unit: ${unitToDelete}`)
 
-        // Also remove the unit from the details section if it was added there
-        const additionalRows = JSON.parse(localStorage.getItem("additionalDetailRows") || "[]")
-        const unitColumn = findUnitColumn(installationData)
-
-        // Find and remove the row from additional rows
-        const updatedAdditionalRows = additionalRows.filter((row: any) => {
-          const rowUnit = unitColumn ? row[unitColumn] : row.Unit
-          return rowUnit !== noteToDelete.unit
-        })
-
-        if (updatedAdditionalRows.length !== additionalRows.length) {
-          localStorage.setItem("additionalDetailRows", JSON.stringify(updatedAdditionalRows))
-          console.log("Removed unit from details section:", noteToDelete.unit)
+      // CRITICAL: Add to blacklist so it never reappears
+      try {
+        const storedBlacklist = localStorage.getItem("deletedNotesBlacklist")
+        let blacklist: string[] = storedBlacklist ? JSON.parse(storedBlacklist) : []
+        
+        if (!blacklist.includes(unitToDelete)) {
+          blacklist.push(unitToDelete)
+          localStorage.setItem("deletedNotesBlacklist", JSON.stringify(blacklist))
+          console.log(`Added unit ${unitToDelete} to blacklist. Current blacklist:`, blacklist)
         }
+      } catch (error) {
+        console.error("Error updating blacklist:", error)
       }
+
+      // Remove from unitNotes in localStorage (only the note text, not the unit)
+      try {
+        const storedNotes = getStoredNotes()
+        if (unitToDelete && storedNotes[unitToDelete] !== undefined) {
+          const updatedStoredNotes = { ...storedNotes }
+          delete updatedStoredNotes[unitToDelete]
+          localStorage.setItem("unitNotes", JSON.stringify(updatedStoredNotes))
+        }
+      } catch (error) {
+        console.error("Error removing unit from unitNotes:", error)
+      }
+
+      // Remove from reportNotes in localStorage
+      try {
+        const reportNotes = JSON.parse(localStorage.getItem("reportNotes") || "[]")
+        const filteredReportNotes = reportNotes.filter((note: any) => note.unit !== unitToDelete)
+        localStorage.setItem("reportNotes", JSON.stringify(filteredReportNotes))
+      } catch (error) {
+        console.error("Error removing unit from reportNotes:", error)
+      }
+
+      // NOTE: We do NOT remove from installationData or unitDetails
+      // This allows the unit to still appear in the details page
+      // Only the note is deleted, not the entire unit
 
       setEditedNotes(updatedNotes)
       setNotes(updatedNotes)
       localStorage.setItem("reportNotes", JSON.stringify(updatedNotes))
-      console.log(`Deleted note at index ${index}`)
+      console.log(`Deleted note at index ${index} for unit ${unitToDelete}`)
       console.log("Updated notes after deletion:", updatedNotes)
     }
   }
@@ -543,28 +635,47 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
 
       {/* Notes content */}
       <div className="mb-16">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold">
-            {isEditable ? (
-              <EditableText
-                value={notesTitle}
-                onChange={handleSectionTitleChange}
-                placeholder="Section Title"
-                className="text-xl font-bold"
-              />
-            ) : (
-              notesTitle
-            )}
-          </h2>
-          {isEditable && (
-            <Button onClick={handleAddNote} size="sm" className="flex items-center gap-2">
-              <Plus className="h-4 w-4" />
-              Add Note
-            </Button>
-          )}
+        <div className="sticky top-0 bg-white z-10 pb-4 border-b mb-6">
+          <div className="flex items-center justify-between pt-2">
+            <h2 className="text-xl font-bold">
+              {isEditable ? (
+                <EditableText
+                  value={notesTitle}
+                  onChange={handleSectionTitleChange}
+                  placeholder="Section Title"
+                  className="text-xl font-bold"
+                />
+              ) : (
+                notesTitle
+              )}
+            </h2>
+            <div className="flex items-center gap-4">
+              {isEditable && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="sync-notes-details"
+                      checked={syncNotesAndDetails}
+                      onCheckedChange={(checked) => setSyncNotesAndDetails(checked as boolean)}
+                    />
+                    <label
+                      htmlFor="sync-notes-details"
+                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                    >
+                      Sync notes with details section
+                    </label>
+                  </div>
+                  <Button onClick={handleAddNote} size="sm" className="flex items-center gap-2">
+                    <Plus className="h-4 w-4" />
+                    Add Note
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
-        <table className="w-full">
+        <table className="w-full notes-table">
           <thead>
             <tr>
               <th className="text-left py-2 px-4 border-b w-[150px]">Unit</th>
@@ -582,6 +693,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
             ) : (
               filteredNotes.map((note, index) => {
                 const unitProp = getUnitProperty(note)
+                
                 return (
                   <tr key={index}>
                     <td className="py-2 px-4 border-b">
@@ -659,7 +771,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
             <table className="w-full">
               <thead>
                 <tr>
-                  <th className="text-left py-2 px-4 border-b w-[20px]">Unit</th>
+                  <th className="text-left py-2 px-4 border-b w-[150px]">Unit</th>
                   <th className="text-left py-2 px-4 border-b">Notes</th>
                 </tr>
               </thead>
