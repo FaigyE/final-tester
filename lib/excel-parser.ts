@@ -287,69 +287,79 @@ export async function parseExcelFile(file: File): Promise<InstallationData[]> {
         // Second pass: track current count for numbering
         const currentCounts = new Map<string, number>()
         
-        const formattedData = parsedCsvData.map((row: any, index: number) => {
-          const formattedRow: Record<string, string> = {}
+const formattedData = parsedCsvData.map((row: any, index: number) => {
+  const formattedRow: Record<string, string> = {}
 
-          // First pass: identify the unit column and its value
-          const headers = Object.keys(row)
-          const unitColumnName = headers.find(h => h.toLowerCase().includes("unit")) || headers[0]
-          let unitValue = String(row[unitColumnName] || "").trim()
-          // Convert unit name to title case (each word capitalized)
-          if (unitValue) {
-            unitValue = unitValue
-              .split(/\s+/)
-              .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-              .join(' ')
-          }
+  // First pass: identify the unit column and its value
+  const headers = Object.keys(row)
+  const unitColumnName = headers.find(h => h.toLowerCase().includes("unit")) || headers[0]
+  let unitValue = String(row[unitColumnName] || "").trim()
+  
+  // Convert unit name to title case (each word capitalized)
+  if (unitValue) {
+    unitValue = unitValue
+      .split(/\s+/)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ')
+  }
 
-          // Track and number duplicate units only if there are multiple
-          if (unitValue) {
-            const totalCount = unitCounts.get(unitValue) || 0
-            const currentCount = currentCounts.get(unitValue) || 0
-            currentCounts.set(unitValue, currentCount + 1)
-            
-            // Only add numbering if there are multiple units with this name
-            if (totalCount > 1) {
-              unitValue = `${unitValue} ${currentCount + 1}`
-              console.log(`Excel->CSV: Numbering duplicate unit: "${unitValue}"`)
-            }
-          }
+  // Track and number duplicate units only if there are multiple
+  let finalUnitValue = unitValue  // ← STORE IN SEPARATE VARIABLE
+  if (unitValue) {
+    const totalCount = unitCounts.get(unitValue) || 0
+    const currentCount = currentCounts.get(unitValue) || 0
+    currentCounts.set(unitValue, currentCount + 1)
+    
+    // Only add numbering if there are multiple units with this name
+    if (totalCount > 1) {
+      finalUnitValue = `${unitValue} ${currentCount + 1}`  // ← USE finalUnitValue
+      console.log(`Excel->CSV: Numbering duplicate unit: "${finalUnitValue}"`)
+    }
+  }
 
-          Object.keys(row).forEach((key) => {
-            // Handle null/undefined values
-            let value = row[key]
-            if (value === null || value === undefined) {
-              value = ""
-            } else {
-              value = String(value).trim()
-            }
+  Object.keys(row).forEach((key) => {
+  // Handle null/undefined values
+  let value = row[key]
+  if (value === null || value === undefined) {
+    value = ""
+  } else {
+    value = String(value).trim()
+  }
 
-            // If this is the unit column, use the numbered value
-            if (key === unitColumnName) {
-              value = unitValue
-            }
+  // If this is the unit column, use the numbered value
+  if (key === unitColumnName) {
+    value = finalUnitValue
+  }
 
-            // Preserve the original column name
-            formattedRow[key] = value
+  // Preserve the original column name
+  formattedRow[key] = value
 
-            // Also add lowercase version for case-insensitive matching
-            formattedRow[key.toLowerCase()] = value
+  // Also add lowercase version for case-insensitive matching
+  formattedRow[key.toLowerCase()] = value
 
-            // Add common variations of column names for better matching
-            if (key.toLowerCase().includes("kitchen") && key.toLowerCase().includes("aerator")) {
-              formattedRow["Kitchen Aerator"] = value
-            }
-            if (key.toLowerCase().includes("bathroom") && key.toLowerCase().includes("aerator")) {
-              formattedRow["Bathroom aerator"] = value
-            }
-            if (key.toLowerCase().includes("shower") && key.toLowerCase().includes("head")) {
-              formattedRow["Shower Head"] = value
-            }
-          })
+  // Add common variations of column names for better matching
+  if (key.toLowerCase().includes("kitchen") && key.toLowerCase().includes("aerator")) {
+    formattedRow["Kitchen Aerator"] = value
+  }
+  if (key.toLowerCase().includes("bathroom") && key.toLowerCase().includes("aerator")) {
+    formattedRow["Bathroom aerator"] = value
+  }
+  if (key.toLowerCase().includes("shower") && key.toLowerCase().includes("head")) {
+    formattedRow["Shower Head"] = value
+  }
+})
 
-          return formattedRow as InstallationData
+// ← CRITICAL: Ensure ALL unit column variations have the numbered value
+formattedRow["Unit"] = finalUnitValue
+formattedRow[unitColumnName] = finalUnitValue  // Original column name
+if (unitColumnName.toLowerCase() !== "unit") {
+  formattedRow["unit"] = finalUnitValue  // Lowercase variation
+  formattedRow[unitColumnName.toLowerCase()] = finalUnitValue  // Lowercase original
+}
+
+return formattedRow as InstallationData
+
         })
-
         console.log("Excel->CSV: Final formatted data sample:", formattedData.slice(0, 3))
         console.log("Excel->CSV: Final formatted data last 3:", formattedData.slice(-3))
 

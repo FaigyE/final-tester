@@ -193,189 +193,182 @@ export default function ReportDetailPage({
   const unitColumn = findUnitColumn(installationDataState)
   const allData = [...installationDataState, ...additionalRows]
 
-  const filteredData = (() => {
-  const result: InstallationData[] = []
+    // Number duplicate unit values for display
+    const filteredData = (() => {
+      const result: InstallationData[] = [];
+      const unitCount: Record<string, number> = {};
+      const unitTotal: Record<string, number> = {};
 
-    for (let i = 0; i < allData.length; i++) {
-      const item = allData[i]
-      const unitValue = unitColumn ? item[unitColumn] : item.Unit
-
-      if (!unitValue || String(unitValue).trim() === "") continue
-
-      result.push(item)
-    }
-
-    // Group installations by unit and read quantities from specific Excel columns
-    const consolidatedData: Record<
-      string,
-      {
-        unit: string
-        kitchenQuantity: number
-        bathroomQuantity: number
-        showerADAQuantity: number
-        showerRegularQuantity: number
-        toiletQuantity: number
-        notes: string[]
-        originalItem: InstallationData
+      // First pass: count total occurrences
+      for (const item of allData) {
+        const unitValue = unitColumn ? item[unitColumn] : item.Unit;
+        const key = String(unitValue || "").trim();
+        if (!key) continue;
+        unitTotal[key] = (unitTotal[key] || 0) + 1;
       }
-    > = {}
 
-    // Helper function to find specific quantity columns
-    const findSpecificColumns = () => {
-      if (!result.length) return {};
-      const firstItem = result[0];
-      const keys = Object.keys(firstItem);
-      const columns: {
-        kitchenAerator?: string;
-        bathroomAeratorColumns?: string[];
-        adaShowerHead?: string;
-        regularShowerHead?: string;
-        toiletInstalled?: string;
-      } = {
-        kitchenAerator: keys.find((key) => {
-          const lowerKey = key.toLowerCase();
-          return lowerKey.includes("kitchen") && lowerKey.includes("aerator");
-        }),
+      // Second pass: process and number duplicates
+      for (const item of allData) {
+        const unitValue = unitColumn ? item[unitColumn] : item.Unit;
+        const key = String(unitValue || "").trim();
+        if (!key) continue;
+        unitCount[key] = (unitCount[key] || 0) + 1;
+        let displayUnit = key;
+        if (unitTotal[key] > 1) {
+          displayUnit = `${key} ${unitCount[key]}`;
+        }
+        // Clone item and override display unit
+        const newItem = { ...item };
+        newItem[unitColumn || "Unit"] = displayUnit;
+        newItem.Unit = displayUnit;
+        result.push(newItem);
+      }
 
-        bathroomAeratorColumns: keys.filter((key) => {
-        const lowerKey = key.toLowerCase();
-        return lowerKey.includes("bathroom") && lowerKey.includes("aerator");
-      }),
-        adaShowerHead: keys.find((key) => {
-          const lowerKey = key.toLowerCase();
-          return lowerKey.includes("ada") && lowerKey.includes("shower");
-        }),
-        regularShowerHead: keys.find((key) => {
-          const lowerKey = key.toLowerCase();
-          return (
-            lowerKey.includes("shower") &&
-            (lowerKey.includes("head") || lowerKey === "showerhead") &&
-            !lowerKey.includes("ada")
-          );
-        }),
-        toiletInstalled: keys.find((key) => {
-          const lowerKey = key.toLowerCase();
-          return lowerKey.includes("toilet") && lowerKey.includes("install");
-        }),
+      // ...existing consolidation logic...
+      // Group installations by unit and read quantities from specific Excel columns
+      const consolidatedData: Record<
+        string,
+        {
+          unit: string;
+          kitchenQuantity: number;
+          bathroomQuantity: number;
+          showerADAQuantity: number;
+          showerRegularQuantity: number;
+          toiletQuantity: number;
+          notes: string[];
+          originalItem: InstallationData;
+        }
+      > = {};
+
+      const findSpecificColumns = () => {
+        if (!result.length) return {};
+        const firstItem = result[0];
+        const keys = Object.keys(firstItem);
+        const columns: {
+          kitchenAerator?: string;
+          bathroomAeratorColumns?: string[];
+          adaShowerHead?: string;
+          regularShowerHead?: string;
+          toiletInstalled?: string;
+        } = {
+          kitchenAerator: keys.find((key) => {
+            const lowerKey = key.toLowerCase();
+            return lowerKey.includes("kitchen") && lowerKey.includes("aerator");
+          }),
+          bathroomAeratorColumns: keys.filter((key) => {
+            const lowerKey = key.toLowerCase();
+            return lowerKey.includes("bathroom") && lowerKey.includes("aerator");
+          }),
+          adaShowerHead: keys.find((key) => {
+            const lowerKey = key.toLowerCase();
+            return lowerKey.includes("ada") && lowerKey.includes("shower");
+          }),
+          regularShowerHead: keys.find((key) => {
+            const lowerKey = key.toLowerCase();
+            return (
+              lowerKey.includes("shower") &&
+              (lowerKey.includes("head") || lowerKey === "showerhead") &&
+              !lowerKey.includes("ada")
+            );
+          }),
+          toiletInstalled: keys.find((key) => {
+            const lowerKey = key.toLowerCase();
+            return lowerKey.includes("toilet") && lowerKey.includes("install");
+          }),
+        };
+        return columns;
       };
-      console.log("Found specific columns:", columns);
-      return columns;
-    }
 
-    const specificColumns = findSpecificColumns()
+      const specificColumns = findSpecificColumns();
 
-    // Process each row and consolidate by unit
-    for (const item of result) {
-      const unitValue = unitColumn ? item[unitColumn] : item.Unit
-      const unitKey = String(unitValue || "").trim()
-
-      if (!unitKey) continue
-
-      // Initialize unit data if not exists
-      if (!consolidatedData[unitKey]) {
-        consolidatedData[unitKey] = {
-          unit: unitKey,
-          kitchenQuantity: 0,
-          bathroomQuantity: 0,
-          showerADAQuantity: 0,
-          showerRegularQuantity: 0,
-          toiletQuantity: 0,
-          notes: [],
-          originalItem: item,
+      for (const item of result) {
+        const unitValue = unitColumn ? item[unitColumn] : item.Unit;
+        const unitKey = String(unitValue || "").trim();
+        if (!unitKey) continue;
+        if (!consolidatedData[unitKey]) {
+          consolidatedData[unitKey] = {
+            unit: unitKey,
+            kitchenQuantity: 0,
+            bathroomQuantity: 0,
+            showerADAQuantity: 0,
+            showerRegularQuantity: 0,
+            toiletQuantity: 0,
+            notes: [],
+            originalItem: item,
+          };
         }
-      }
-
-      console.log(`Processing Unit ${unitKey}:`)
-
-      // Kitchen: Always 1 if kitchen aerator column has data
-      if (specificColumns.kitchenAerator && item[specificColumns.kitchenAerator]) {
-        const kitchenValue = String(item[specificColumns.kitchenAerator]).trim()
-        if (kitchenValue && kitchenValue !== "" && kitchenValue !== "0") {
-          consolidatedData[unitKey].kitchenQuantity = 1
-          console.log(`Kitchen quantity for ${unitKey}: 1 (has data: ${kitchenValue})`)
+        // ...existing logic for quantities and notes...
+        // Kitchen
+        if (specificColumns.kitchenAerator && item[specificColumns.kitchenAerator]) {
+          const kitchenValue = String(item[specificColumns.kitchenAerator]).trim();
+          if (kitchenValue && kitchenValue !== "" && kitchenValue !== "0") {
+            consolidatedData[unitKey].kitchenQuantity = 1;
+          }
         }
-      }
-
-      let bathroomCount = 0
-      if (specificColumns.bathroomAeratorColumns && specificColumns.bathroomAeratorColumns.length > 0) {
-        for (const bathroomCol of specificColumns.bathroomAeratorColumns) {
-          if (item[bathroomCol]) {
-            const bathroomValue = String(item[bathroomCol]).trim()
-            if (bathroomValue && bathroomValue !== "" && bathroomValue !== "0") {
-              bathroomCount += 1
-              console.log(`Preview: Bathroom aerator "${bathroomCol}" for ${unitKey}: +1 (has data: ${bathroomValue})`)
+        // Bathroom
+        let bathroomCount = 0;
+        if (specificColumns.bathroomAeratorColumns && specificColumns.bathroomAeratorColumns.length > 0) {
+          for (const bathroomCol of specificColumns.bathroomAeratorColumns) {
+            if (item[bathroomCol]) {
+              const bathroomValue = String(item[bathroomCol]).trim();
+              if (bathroomValue && bathroomValue !== "" && bathroomValue !== "0") {
+                bathroomCount += 1;
+              }
             }
           }
         }
-      } else {
-        console.log(`Preview: No bathroom aerator columns found for ${unitKey}`)
-      }
-      consolidatedData[unitKey].bathroomQuantity = bathroomCount
-      console.log(`Preview: Total bathroom quantity for ${unitKey}: ${bathroomCount}`)
-
-      // Shower: Read actual quantities from both columns
-      // Only use the value from the correct cell for each type
-      if (specificColumns.adaShowerHead) {
-        const adaValue = item[specificColumns.adaShowerHead];
-        const adaQuantity = adaValue && adaValue !== '' ? Number.parseInt(String(adaValue as string)) || 0 : 0;
-        consolidatedData[unitKey].showerADAQuantity = adaQuantity;
-        console.log(`ADA Shower quantity for ${unitKey}: ${adaQuantity}`);
-      } else {
-        consolidatedData[unitKey].showerADAQuantity = 0;
-      }
-      if (specificColumns.regularShowerHead) {
-        const regularValue = item[specificColumns.regularShowerHead];
-        const regularQuantity = regularValue && regularValue !== '' ? Number.parseInt(String(regularValue as string)) || 0 : 0;
-        consolidatedData[unitKey].showerRegularQuantity = regularQuantity;
-        console.log(`Regular Shower quantity for ${unitKey}: ${regularQuantity}`);
-      } else {
-        consolidatedData[unitKey].showerRegularQuantity = 0;
-      }
-
-      // Toilet: Read direct quantity from toilets installed column
-      if (specificColumns.toiletInstalled && item[specificColumns.toiletInstalled]) {
-        const toiletQuantity = Number.parseInt(String(item[specificColumns.toiletInstalled] as string)) || 0;
-        consolidatedData[unitKey].toiletQuantity = toiletQuantity;
-        console.log(`Toilet quantity for ${unitKey}: ${toiletQuantity}`);
-      } else {
-        consolidatedData[unitKey].toiletQuantity = 0;
+        consolidatedData[unitKey].bathroomQuantity = bathroomCount;
+        // Shower
+        if (specificColumns.adaShowerHead) {
+          const adaValue = item[specificColumns.adaShowerHead];
+          const adaQuantity = adaValue && adaValue !== '' ? Number.parseInt(String(adaValue as string)) || 0 : 0;
+          consolidatedData[unitKey].showerADAQuantity = adaQuantity;
+        } else {
+          consolidatedData[unitKey].showerADAQuantity = 0;
+        }
+        if (specificColumns.regularShowerHead) {
+          const regularValue = item[specificColumns.regularShowerHead];
+          const regularQuantity = regularValue && regularValue !== '' ? Number.parseInt(String(regularValue as string)) || 0 : 0;
+          consolidatedData[unitKey].showerRegularQuantity = regularQuantity;
+        } else {
+          consolidatedData[unitKey].showerRegularQuantity = 0;
+        }
+        // Toilet
+        if (specificColumns.toiletInstalled && item[specificColumns.toiletInstalled]) {
+          const toiletQuantity = Number.parseInt(String(item[specificColumns.toiletInstalled] as string)) || 0;
+          consolidatedData[unitKey].toiletQuantity = toiletQuantity;
+        } else {
+          consolidatedData[unitKey].toiletQuantity = 0;
+        }
+        // Notes
+        const { note: unitNote } = getNotesAndDetailsForUnit(unitKey);
+        if (unitNote && unitNote.trim()) {
+          consolidatedData[unitKey].notes.push(unitNote.trim());
+        }
       }
 
-      // Get notes using the new notes/details system
-      const { note: unitNote } = getNotesAndDetailsForUnit(unitKey)
-      if (unitNote && unitNote.trim()) {
-        consolidatedData[unitKey].notes.push(unitNote.trim())
-      }
-    }
+      const consolidatedResult = Object.values(consolidatedData).map((unitData) => {
+        const consolidatedItem = { ...unitData.originalItem };
+        (consolidatedItem as any)._kitchenQuantity = unitData.kitchenQuantity;
+        (consolidatedItem as any)._bathroomQuantity = unitData.bathroomQuantity;
+        (consolidatedItem as any)._showerADAQuantity = unitData.showerADAQuantity;
+        (consolidatedItem as any)._showerRegularQuantity = unitData.showerRegularQuantity;
+        (consolidatedItem as any)._toiletQuantity = unitData.toiletQuantity;
+        (consolidatedItem as any)._consolidatedNotes = [...new Set(unitData.notes)].join(" ");
+        return consolidatedItem;
+      });
 
-    // Convert back to array format with new quantity data
-    const consolidatedResult = Object.values(consolidatedData).map((unitData) => {
-      // Create a new item with quantity information
-      const consolidatedItem = { ...unitData.originalItem };
-      // Store quantities in the item for later use (as numbers)
-      (consolidatedItem as any)._kitchenQuantity = unitData.kitchenQuantity;
-      (consolidatedItem as any)._bathroomQuantity = unitData.bathroomQuantity;
-      (consolidatedItem as any)._showerADAQuantity = unitData.showerADAQuantity;
-      (consolidatedItem as any)._showerRegularQuantity = unitData.showerRegularQuantity;
-      (consolidatedItem as any)._toiletQuantity = unitData.toiletQuantity;
-      (consolidatedItem as any)._consolidatedNotes = [...new Set(unitData.notes)].join(" ");
-      return consolidatedItem;
-    });
-
-    return consolidatedResult.sort((a, b) => {
-      const unitA = unitColumn ? a[unitColumn] : a.Unit
-      const unitB = unitColumn ? b[unitColumn] : b.Unit
-
-      const numA = Number.parseInt(String(unitA))
-      const numB = Number.parseInt(String(unitB))
-
-      if (!isNaN(numA) && !isNaN(numB)) {
-        return numA - numB
-      }
-
-      return String(unitA).localeCompare(String(unitB), undefined, { numeric: true, sensitivity: "base" })
-    })
-  })()
+      return consolidatedResult.sort((a, b) => {
+        const unitA = unitColumn ? a[unitColumn] : a.Unit;
+        const unitB = unitColumn ? b[unitColumn] : b.Unit;
+        const numA = Number.parseInt(String(unitA));
+        const numB = Number.parseInt(String(unitB));
+        if (!isNaN(numA) && !isNaN(numB)) {
+          return numA - numB;
+        }
+        return String(unitA).localeCompare(String(unitB), undefined, { numeric: true, sensitivity: "base" });
+      });
+    })();
 
   // Check what columns to show
   const hasKitchenAerators = filteredData.some((item) => Number(item._kitchenQuantity) > 0);
@@ -390,15 +383,30 @@ const hasBathroomAerators = filteredData.some((item) => {
   const hasNotes = true
 
 useEffect(() => {
-  // Update unit type when prop changes
   const newUnitType = (unitTypeProp as "Unit" | "Room") || "Unit"
   setUnitType(newUnitType)
-  // Update column header when unit type changes
-  setColumnHeaders(prev => ({
-    ...prev,
-    unit: newUnitType as "Unit" | "Room"
-  }))
+  setColumnHeaders(prev => ({ ...prev, unit: newUnitType }))
+  
+  // NEW: Save and dispatch
+  localStorage.setItem("unitType", JSON.stringify(newUnitType))
+  window.dispatchEvent(new Event("unitTypeChanged"))
 }, [unitTypeProp])
+
+useEffect(() => {
+  const handleUnitTypeChange = () => {
+    const storedUnitType = localStorage.getItem("unitType")
+    if (storedUnitType) {
+      const parsedUnitType = JSON.parse(storedUnitType) as "Unit" | "Room"
+      setUnitType(parsedUnitType)
+      setColumnHeaders(prev => ({ ...prev, unit: parsedUnitType }))
+    }
+  }
+  
+  window.addEventListener("unitTypeChanged", handleUnitTypeChange)
+  return () => window.removeEventListener("unitTypeChanged", handleUnitTypeChange)
+}, [])
+
+
   // Load CSV preview data from localStorage and listen for unified notes updates
   useEffect(() => {
     try {
@@ -446,24 +454,26 @@ useEffect(() => {
       }))
     }
   }
-
-  const handleDetailEdit = (unit: string, value: string) => {
-    if (isEditable) {
-      updateStoredDetail(unit, value)
-      
-      // If sync is enabled, also update notes
-      if (syncDetailsAndNotes) {
+ 
+const handleDetailEdit = (unit: string, value: string) => {
+  if (isEditable) {
+    updateStoredDetail(unit, value)
+    
+    // If sync is enabled, only sync if unit already has a note
+    if (syncDetailsAndNotes) {
+      const existingNotes = getStoredNotes()
+      if (existingNotes[unit]) {
         updateStoredNote(unit, value)
         console.log(`Synced detail to notes for unit ${unit}`)
       }
-      
-      setEditedDetails((prev) => ({
-        ...prev,
-        [unit]: value,
-      }))
     }
+    
+    setEditedDetails((prev) => ({
+      ...prev,
+      [unit]: value,
+    }))
   }
-
+}
   const handleInstallationEdit = (unit: string, type: string, value: string) => {
     if (isEditable) {
       setEditedInstallations((prev) => ({
@@ -881,11 +891,17 @@ useEffect(() => {
                           const allEmptyOrUnable = valuesToCheck.every(
                             v => v === "Unable" || v === ""
                           );
-                          const detailsText = allEmptyOrUnable
-                            ? `${unitType === "Room" ? "Room" : "Unit"} not accessed`
-                            : (editedDetails[unitValue ?? ""] !== undefined
-                                ? editedDetails[unitValue ?? ""]
-                                : getNotesAndDetailsForUnit(unitValue ?? "").detail);
+                          
+                          // Get the full details from the notes/details system
+                          const notesAndDetailsInfo = getNotesAndDetailsForUnit(unitValue ?? "");
+                          
+                          let detailsText =
+                            editedDetails[unitValue ?? ""] !== undefined
+                              ? editedDetails[unitValue ?? ""]
+                              : (allEmptyOrUnable
+                                  ? `${unitType === "Room" ? "Room" : "Unit"} not accessed`
+                                  : notesAndDetailsInfo.detail);
+
                           if (isEditable) {
                             return (
                               <EditableText

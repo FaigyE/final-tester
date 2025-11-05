@@ -22,6 +22,7 @@ export default function EnhancedPdfButton({
   toiletCount,
   notes,
 }: EnhancedPdfButtonProps) {
+  const [unitType, setUnitType] = useState<"Unit" | "Room">("Unit")
   const [isGenerating, setIsGenerating] = useState(false)
   const [jsPDFLoaded, setJsPDFLoaded] = useState(false)
   const [logoLoaded, setLogoLoaded] = useState(false)
@@ -33,7 +34,7 @@ export default function EnhancedPdfButton({
   const [editedInstallations, setEditedInstallations] = useState<Record<string, Record<string, string>>>({})
   const [editedReportNotes, setEditedReportNotes] = useState<Note[]>([])
   const [columnHeaders, setColumnHeaders] = useState({
-    unit: "Unit",
+    unit: unitType, // Use unitType state instead of hardcoded "Unit"
     kitchen: "Kitchen Aerator\nInstalled",
     bathroom: "Bathroom Aerator\nInstalled",
     shower: "Shower Head\nInstalled",
@@ -41,6 +42,7 @@ export default function EnhancedPdfButton({
     notes: "Notes",
   })
   const [editedUnits, setEditedUnits] = useState<Record<string, string>>({})
+
 
   // Get the latest state from context
   const {
@@ -70,6 +72,14 @@ export default function EnhancedPdfButton({
     }
   }, [])
 
+   useEffect(() => {
+    setColumnHeaders(prev => ({
+      ...prev,
+      unit: unitType
+    }))
+    console.log("PDF: Updated column headers with unit type:", unitType)
+  }, [unitType])
+
   // Load edited report notes from localStorage
   useEffect(() => {
     const storedReportNotes = localStorage.getItem("reportNotes")
@@ -84,6 +94,34 @@ export default function EnhancedPdfButton({
     }
   }, [])
 
+  useEffect(() => {
+    const loadUnitType = () => {
+      try {
+        const storedUnitType = localStorage.getItem("unitType")
+        if (storedUnitType) {
+          const parsedUnitType = JSON.parse(storedUnitType) as "Unit" | "Room"
+          setUnitType(parsedUnitType)
+          console.log("PDF: Loaded unit type from localStorage:", parsedUnitType)
+        }
+      } catch (error) {
+        console.error("PDF: Error loading unit type:", error)
+      }
+    }
+
+    loadUnitType()
+
+    // Listen for unit type changes
+    const handleUnitTypeChange = () => {
+      console.log("PDF: Received unit type change event")
+      loadUnitType()
+    }
+
+    window.addEventListener("unitTypeChanged", handleUnitTypeChange)
+    
+    return () => {
+      window.removeEventListener("unitTypeChanged", handleUnitTypeChange)
+    }
+  }, [])
   // Load column headers from localStorage
   useEffect(() => {
     const storedHeaders = localStorage.getItem("columnHeaders")
@@ -340,24 +378,67 @@ export default function EnhancedPdfButton({
       const unitColumn: string | null = findUnitColumn(installationData)
       console.log("PDF: Using unit column:", unitColumn)
 
-      const consolidatedData: Record<
-        string,
-        {
-          unit: string
-          kitchenQuantity: number
-          bathroomQuantity: number
-          showerADAQuantity: number
-          showerRegularQuantity: number
-          toiletQuantity: number
-          notes: string[]
+      // STEP 1: Filter out invalid rows FIRST
+      const filteredInstallationData = installationData.filter((item) => {
+        const unitValue = unitColumn ? item[unitColumn] : item.Unit
+        if (!unitValue || String(unitValue).trim() === "") return false
+
+        const trimmedUnit = String(unitValue).trim()
+        const lowerUnit = trimmedUnit.toLowerCase()
+        const invalidValues = ["total", "sum", "average", "avg", "count", "header"]
+
+        return !invalidValues.some((val) => lowerUnit === val || lowerUnit.includes(val))
+      })
+
+      // STEP 2: Count duplicates for numbering
+      const unitCount: Record<string, number> = {}
+      const unitTotal: Record<string, number> = {}
+
+      for (const item of filteredInstallationData) {
+        const unitValue = unitColumn ? item[unitColumn] : item.Unit
+        const key = String(unitValue || "").trim()
+        if (!key) continue
+        unitTotal[key] = (unitTotal[key] || 0) + 1
+      }
+
+      // STEP 3: Apply numbering to duplicates
+      const numberedData = filteredInstallationData.map((item) => {
+        const unitValue = unitColumn ? item[unitColumn] : item.Unit
+        const key = String(unitValue || "").trim()
+        if (!key) return item
+
+        unitCount[key] = (unitCount[key] || 0) + 1
+        let displayUnit = key
+        if (unitTotal[key] > 1) {
+          displayUnit = `${key} ${unitCount[key]}`
         }
-      > = {}
+
+        const newItem = { ...item }
+        newItem[unitColumn || "Unit"] = displayUnit
+        newItem.Unit = displayUnit
+        return newItem
+      })
+    
+
+        // STEP 2: THEN build consolidatedData using numbered data
+        const consolidatedData: Record<
+          string,
+          {
+            unit: string
+            kitchenQuantity: number
+            bathroomQuantity: number
+            showerADAQuantity: number
+            showerRegularQuantity: number
+            toiletQuantity: number
+            notes: string[]
+          }
+        > = {}
 
       // Helper function to find specific quantity columns (same as preview)
       const findSpecificColumns = () => {
-        if (!installationData.length) return {}
+        if (!numberedData.length) return {}
 
-        const firstItem = installationData[0]
+        const firstItem = numberedData[0]
         const keys = Object.keys(firstItem)
 
         const columns = {
@@ -401,19 +482,7 @@ export default function EnhancedPdfButton({
 
 
       // Process installation data using same logic as preview
-      const filteredInstallationData = installationData.filter((item) => {
-        const unitValue = unitColumn ? item[unitColumn] : item.Unit
-        if (!unitValue || String(unitValue).trim() === "") return false
-
-        const trimmedUnit = String(unitValue).trim()
-        const lowerUnit = trimmedUnit.toLowerCase()
-        const invalidValues = ["total", "sum", "average", "avg", "count", "header"]
-
-        return !invalidValues.some((val) => lowerUnit === val || lowerUnit.includes(val))
-      })
-
-      // Consolidate by unit using exact same logic as preview
-      for (const item of filteredInstallationData) {
+   for (const item of numberedData) {
         const unitValue = unitColumn ? item[unitColumn] : item.Unit
         const unitKey = String(unitValue || "").trim()
 
@@ -636,21 +705,16 @@ export default function EnhancedPdfButton({
       }
 
       // Filter out rows without valid unit numbers and apply edits
-      const filteredData = (() => {
-        const result = []
-
-        console.log("PDF: Starting to process installation data...")
-        console.log("PDF: Total rows to process:", installationData.length)
-
-        for (let i = 0; i < installationData.length; i++) {
-          const item = installationData[i]
-
-          const unitValue = unitColumn ? item[unitColumn] : item.Unit
-
+ const filteredData = (() => {
+        const result = [];
+        console.log("PDF: Starting to process installation data...");
+        console.log("PDF: Total rows to process:", numberedData.length);
+        for (let i = 0; i < numberedData.length; i++) {
+          const item = numberedData[i];
+          const unitValue = unitColumn ? item[unitColumn] : item.Unit;
           console.log(
             `PDF Row ${i + 1}: Unit="${unitValue}" (type: ${typeof unitValue}, length: ${unitValue ? unitValue.length : "null"})`,
-          )
-
+          );
           if (
             unitValue === undefined ||
             unitValue === null ||
@@ -659,68 +723,53 @@ export default function EnhancedPdfButton({
           ) {
             console.log(
               `PDF STOPPING: Found empty unit at row ${i + 1}. Unit value: "${unitValue}". Processed ${result.length} valid rows.`,
-            )
-            break
+            );
+            break;
           }
-
-          const trimmedUnit = String(unitValue).trim()
-
+          const trimmedUnit = String(unitValue).trim();
           if (trimmedUnit === "") {
             console.log(
               `PDF STOPPING: Found empty unit after trimming at row ${i + 1}. Original: "${unitValue}". Processed ${result.length} valid rows.`,
-            )
-            break
+            );
+            break;
           }
-
           if (latestEditedUnits[trimmedUnit] === "") {
-            console.log(`PDF: Skipping deleted unit "${trimmedUnit}" (marked as completely blank)`)
-            continue
+            console.log(`PDF: Skipping deleted unit "${trimmedUnit}" (marked as completely blank)`);
+            continue;
           }
-
-          const lowerUnit = trimmedUnit.toLowerCase()
-          const invalidValues = ["total", "sum", "average", "avg", "count", "header", "grand total", "subtotal"]
-
-          const isInvalidUnit = invalidValues.some((val) => lowerUnit === val || lowerUnit.includes(val))
-
+          const lowerUnit = trimmedUnit.toLowerCase();
+          const invalidValues = ["total", "sum", "average", "avg", "count", "header", "grand total", "subtotal"];
+          const isInvalidUnit = invalidValues.some((val) => lowerUnit === val || lowerUnit.includes(val));
           const hasInstallationData =
             (kitchenAeratorColumn && item[kitchenAeratorColumn] && item[kitchenAeratorColumn] !== "") ||
             (bathroomAeratorColumn && item[bathroomAeratorColumn] && item[bathroomAeratorColumn] !== "") ||
             (showerHeadColumn && item[showerHeadColumn] && item[showerHeadColumn] !== "") ||
-            hasToiletInstalled(item)
-
+            hasToiletInstalled(item);
           const hasLeakData =
-            item["Leak Issue Kitchen Faucet"] || item["Leak Issue Bath Faucet"] || item["Tub Spout/Diverter Leak Issue"]
-
+            item["Leak Issue Kitchen Faucet"] || item["Leak Issue Bath Faucet"] || item["Tub Spout/Diverter Leak Issue"];
           if (isInvalidUnit && !hasInstallationData && !hasLeakData) {
             console.log(
               `PDF: Skipping invalid unit "${trimmedUnit}" at row ${i + 1} (contains: ${invalidValues.find((val) => lowerUnit.includes(val))} and no relevant data)`,
-            )
-            continue
+            );
+            continue;
           }
-
-          console.log(`PDF: Adding valid unit: "${trimmedUnit}"`)
-          result.push(item)
+          console.log(`PDF: Adding valid unit: "${trimmedUnit}"`);
+          result.push(item);
         }
-
-        console.log(`PDF: Final result: ${result.length} valid units processed`)
-
+        console.log(`PDF: Final result: ${result.length} valid units processed`);
         return result.sort((a, b) => {
-          const unitA = unitColumn ? a[unitColumn] : a.Unit
-          const unitB = unitColumn ? b[unitColumn] : b.Unit
-
-          const finalUnitA = unitA && latestEditedUnits[unitA] !== undefined ? latestEditedUnits[unitA] : unitA || ""
-          const finalUnitB = unitB && latestEditedUnits[unitB] !== undefined ? latestEditedUnits[unitB] : unitB || ""
-
-          const numA = Number.parseInt(finalUnitA)
-          const numB = Number.parseInt(finalUnitB)
-
+          const unitA = unitColumn ? a[unitColumn] : a.Unit;
+          const unitB = unitColumn ? b[unitColumn] : b.Unit;
+          const finalUnitA = unitA && latestEditedUnits[unitA] !== undefined ? latestEditedUnits[unitA] : unitA || "";
+          const finalUnitB = unitB && latestEditedUnits[unitB] !== undefined ? latestEditedUnits[unitB] : unitB || "";
+          const numA = Number.parseInt(finalUnitA);
+          const numB = Number.parseInt(finalUnitB);
           if (!isNaN(numA) && !isNaN(numB)) {
-            return numA - numB
+            return numA - numB;
           }
-
-          return finalUnitA.localeCompare(finalUnitB, undefined, { numeric: true, sensitivity: "base" })
-        })
-      })()
+          return finalUnitA.localeCompare(finalUnitB, undefined, { numeric: true, sensitivity: "base" });
+        });
+      })();
 
       console.log(`PDF: Processed ${filteredData.length} valid units (stopped at first empty unit, sorted ascending)`)
 
@@ -1203,7 +1252,8 @@ export default function EnhancedPdfButton({
               ? latestEditedUnits[originalUnitValue]
               : originalUnitValue || ""
 
-          const consolidated = consolidatedData[String(originalUnitValue)] || {
+          // FIX: Use displayUnit as the key for consolidatedData to support renamed/numbered units
+          const consolidated = consolidatedData[String(displayUnit)] || {
             kitchenQuantity: 0,
             bathroomQuantity: 0,
             showerADAQuantity: 0,
@@ -1314,14 +1364,34 @@ export default function EnhancedPdfButton({
           }
           
           // First try edited details, then try getFinalDetailForUnit with compiled note
-          let finalNoteText = ""
-          if (latestEditedDetails[unitValue || ""]) {
-            finalNoteText = latestEditedDetails[unitValue || ""]
-          } else {
-            finalNoteText = getFinalDetailForUnit(unitValue || "", compiledNote.trim())
-          }
-          
-          console.log(`PDF: Details for unit ${unitValue}:`, finalNoteText)
+          const valuesToCheck = [
+  kitchenAerator,
+  bathroomAerator,
+  showerHead,
+  toilet
+]
+
+const allEmptyOrUnable = valuesToCheck.every(
+  v => v === "Unable" || v === "" || v === "—"
+)
+
+// Determine the final text based on whether unit was accessed
+let finalNoteText = ""
+
+// If user edited the note, always show the updated note, even if allEmptyOrUnable
+if (latestEditedDetails[unitValue || ""]) {
+  finalNoteText = latestEditedDetails[unitValue || ""]
+  console.log(`PDF: Unit ${unitValue} - using user-edited note: "${finalNoteText}"`)
+} else if (allEmptyOrUnable) {
+  // Show "Unit not accessed" or "Room not accessed" based on unitType
+  finalNoteText = `${unitType} not accessed`
+  console.log(`PDF: Unit ${unitValue} - not accessed, using: "${finalNoteText}"`)
+} else {
+  // Use compiled note or fallback
+  finalNoteText = getFinalDetailForUnit(unitValue || "", compiledNote.trim())
+}
+
+console.log(`PDF: Details for unit ${unitValue}:`, finalNoteText)
 
           // Calculate note lines
           let noteLines: string[] = []
