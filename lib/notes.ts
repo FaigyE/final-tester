@@ -12,6 +12,8 @@ export function compileAllNotes({
   selectedCells?: Record<string, string[]>
   selectedNotesColumns?: string[]
 }): Array<{ unit: string; note: string; [key: string]: any }> {
+  // Track counts of unit names to rename duplicates
+  const unitNameCounts: Record<string, number> = {}
   return installationData.map((item) => {
     let notes = ""
     // Leak issues (same as before)
@@ -46,9 +48,18 @@ export function compileAllNotes({
       })
     }
     // Add notes from selected cells
-    const unitValue = item[unitColumn] || item.Unit
-    if (unitValue && selectedCells[unitValue]) {
-      selectedCells[unitValue].forEach((cellInfo) => {
+    const baseUnitValue = item[unitColumn] || item.Unit
+    let unitValue = baseUnitValue
+    if (unitValue) {
+      if (!unitNameCounts[unitValue]) {
+        unitNameCounts[unitValue] = 1
+      } else {
+        unitNameCounts[unitValue] += 1
+        unitValue = `${unitValue} (${unitNameCounts[unitValue]})`
+      }
+    }
+    if (baseUnitValue && selectedCells[baseUnitValue]) {
+      selectedCells[baseUnitValue].forEach((cellInfo) => {
         notes += `${cellInfo}. `
       })
     }

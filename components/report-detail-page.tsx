@@ -168,6 +168,7 @@ export default function ReportDetailPage({
   }
 
   // Use the new notes/details system
+  // Fix: When unitValue is a renamed duplicate (e.g., '101 2'), only update and retrieve notes for that specific display name
   const getNotesAndDetailsForUnit = (unitValue: string): { note: string; detail: string } => {
     try {
       let selectedCells: Record<string, string[]> = {}
@@ -182,8 +183,10 @@ export default function ReportDetailPage({
         selectedCells,
         selectedNotesColumns,
       })
-      const found = notesAndDetails.find(nd => nd.unit === unitValue)
-      return found ? { note: found.note, detail: found.detail } : { note: "", detail: "" }
+      // Always use the full display unit name for matching
+      let found = notesAndDetails.find(nd => nd.unit === unitValue)
+      if (found) return { note: found.note, detail: found.detail }
+      return { note: "", detail: "" }
     } catch (error) {
       console.error("Error getting notes/details for unit:", unitValue, error)
       return { note: "", detail: "" }
@@ -241,9 +244,14 @@ export default function ReportDetailPage({
       > = {};
 
       const findSpecificColumns = () => {
-        if (!result.length) return {};
-        const firstItem = result[0];
-        const keys = Object.keys(firstItem);
+  if (!result.length) return {};
+  const firstItem = result[0];
+  const keys = Object.keys(firstItem);
+  
+  console.log("[DEBUG] All keys in first item:", keys);
+  console.log("[DEBUG] Keys with 'shower':", 
+    keys.filter(k => k.toLowerCase().includes("shower"))
+  );
         const columns: {
           kitchenAerator?: string;
           bathroomAeratorColumns?: string[];
@@ -260,17 +268,21 @@ export default function ReportDetailPage({
             return lowerKey.includes("bathroom") && lowerKey.includes("aerator");
           }),
           adaShowerHead: keys.find((key) => {
-            const lowerKey = key.toLowerCase();
-            return lowerKey.includes("ada") && lowerKey.includes("shower");
-          }),
-          regularShowerHead: keys.find((key) => {
-            const lowerKey = key.toLowerCase();
-            return (
-              lowerKey.includes("shower") &&
-              (lowerKey.includes("head") || lowerKey === "showerhead") &&
-              !lowerKey.includes("ada")
-            );
-          }),
+      const lowerKey = key.toLowerCase();
+      const matches = lowerKey.includes("ada") && lowerKey.includes("shower");
+      if (matches) console.log(`[DEBUG] Found ADA shower: "${key}"`);
+      return matches;
+    }),
+    regularShowerHead: keys.find((key) => {
+      const lowerKey = key.toLowerCase();
+      const matches = (
+        lowerKey.includes("shower") &&
+        (lowerKey.includes("head") || lowerKey === "showerhead") &&
+        !lowerKey.includes("ada")
+      );
+      if (matches) console.log(`[DEBUG] Found regular shower: "${key}"`);
+      return matches;
+    }),
           toiletInstalled: keys.find((key) => {
             const lowerKey = key.toLowerCase();
             return lowerKey.includes("toilet") && lowerKey.includes("install");
@@ -447,6 +459,7 @@ useEffect(() => {
   // Event handlers
   const handleNoteEdit = (unit: string, value: string) => {
     if (isEditable) {
+      // Always update the note for the full display unit name (e.g., '101 2')
       updateStoredNote(unit, value)
       setEditedNotes((prev) => ({
         ...prev,
@@ -457,9 +470,9 @@ useEffect(() => {
  
 const handleDetailEdit = (unit: string, value: string) => {
   if (isEditable) {
+    // Always update the detail for the full display unit name (e.g., '101 2')
     updateStoredDetail(unit, value)
-    
-    // If sync is enabled, only sync if unit already has a note
+    // If sync is enabled, only sync if this display unit already has a note
     if (syncDetailsAndNotes) {
       const existingNotes = getStoredNotes()
       if (existingNotes[unit]) {
@@ -467,7 +480,6 @@ const handleDetailEdit = (unit: string, value: string) => {
         console.log(`Synced detail to notes for unit ${unit}`)
       }
     }
-    
     setEditedDetails((prev) => ({
       ...prev,
       [unit]: value,

@@ -27,9 +27,44 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
   const [editedNotes, setEditedNotes] = useState<Note[]>([])
   // Add state for sync checkbox - default to true (checked)
   const [syncNotesAndDetails, setSyncNotesAndDetails] = useState<boolean>(true)
+  // Add state to track unitType
+  const [unitType, setUnitType] = useState<"Unit" | "Room">("Unit")
 
   // Get installation data from localStorage directly (same as details page)
   const [installationData, setInstallationData] = useState<any[]>([])
+
+  // Load unitType from localStorage on mount
+  useEffect(() => {
+    try {
+      const storedUnitType = localStorage.getItem("unitType")
+      if (storedUnitType) {
+        const parsedUnitType = JSON.parse(storedUnitType) as "Unit" | "Room"
+        setUnitType(parsedUnitType)
+        console.log("Notes: Loaded unitType from localStorage:", parsedUnitType)
+      }
+    } catch (error) {
+      console.error("Notes: Error loading unitType:", error)
+    }
+  }, [])
+
+  // Listen for unitType changes
+  useEffect(() => {
+    const handleUnitTypeChange = () => {
+      try {
+        const storedUnitType = localStorage.getItem("unitType")
+        if (storedUnitType) {
+          const parsedUnitType = JSON.parse(storedUnitType) as "Unit" | "Room"
+          setUnitType(parsedUnitType)
+          console.log("Notes: Updated unitType from event:", parsedUnitType)
+        }
+      } catch (error) {
+        console.error("Notes: Error handling unitType change:", error)
+      }
+    }
+
+    window.addEventListener("unitTypeChanged", handleUnitTypeChange)
+    return () => window.removeEventListener("unitTypeChanged", handleUnitTypeChange)
+  }, [])
 
   // Load installation data from localStorage
   useEffect(() => {
@@ -326,12 +361,40 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
     return note.note && note.note.trim() !== ""
   })
 
+
+  // Handle duplicate unit names by appending a number to each duplicate
+  const getRenamedNotes = (notes: Note[]) => {
+    const unitCount: Record<string, number> = {}
+    const unitTotal: Record<string, number> = {}
+    // First pass: count total occurrences
+    for (const note of notes) {
+      const key = String(note.unit || '').trim()
+      if (!key) continue
+      unitTotal[key] = (unitTotal[key] || 0) + 1
+    }
+    // Second pass: rename duplicates
+    return notes.map((note) => {
+      const key = String(note.unit || '').trim()
+      if (!key) return note
+      unitCount[key] = (unitCount[key] || 0) + 1
+      let displayUnit = key
+      if (unitTotal[key] > 1) {
+        displayUnit = `${key} ${unitCount[key]}`
+      }
+      return {
+        ...note,
+        unit: displayUnit,
+      }
+    })
+  }
+
+  const renamedNotes = getRenamedNotes(filteredNotes)
+
   // Split notes into pages of 15 items each
   const notesPerPage = 15
   const notePages = []
-
-  for (let i = 0; i < filteredNotes.length; i += notesPerPage) {
-    notePages.push(filteredNotes.slice(i, i + notesPerPage))
+  for (let i = 0; i < renamedNotes.length; i += notesPerPage) {
+    notePages.push(renamedNotes.slice(i, i + notesPerPage))
   }
 
   // Add function to sort notes by unit number
@@ -552,7 +615,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
         <img
           src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Screenshot%202025-04-29%20115501-BD1uw5tVq9PtVYW6Z6FKM1i8in6GeV.png"
           alt="GreenLight Logo"
-          className="h-24" // Increased from h-16
+          className="h-24"
           crossOrigin="anonymous"
         />
       </div>
@@ -602,22 +665,21 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
         <table className="w-full notes-table">
           <thead>
             <tr>
-              <th className="text-left py-2 px-4 border-b w-[150px]">Unit</th>
+              <th className="text-left py-2 px-4 border-b w-[150px]">{unitType}</th>
               <th className="text-left py-2 px-4 border-b">Notes</th>
               {isEditable && <th className="text-left py-2 px-4 border-b w-16">Actions</th>}
             </tr>
           </thead>
           <tbody>
-            {filteredNotes.length === 0 ? (
+            {renamedNotes.length === 0 ? (
               <tr>
                 <td colSpan={isEditable ? 3 : 2} className="py-4 px-4 text-center text-gray-500">
                   No notes with leak issues found
                 </td>
               </tr>
             ) : (
-              filteredNotes.map((note, index) => {
+              renamedNotes.map((note, index) => {
                 const unitProp = getUnitProperty(note)
-                
                 return (
                   <tr key={index}>
                     <td className="py-2 px-4 border-b">
@@ -625,7 +687,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
                         <EditableText
                           value={note[unitProp]}
                           onChange={(value) => handleNoteChange(index, unitProp, value)}
-                          placeholder="Unit"
+                          placeholder={unitType}
                         />
                       ) : (
                         note[unitProp]
@@ -683,7 +745,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
             <img
               src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Screenshot%202025-04-29%20115501-BD1uw5tVq9PtVYW6Z6FKM1i8in6GeV.png"
               alt="GreenLight Logo"
-              className="h-24" // Increased from h-16
+              className="h-24"
               crossOrigin="anonymous"
             />
           </div>
@@ -695,7 +757,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
             <table className="w-full">
               <thead>
                 <tr>
-                  <th className="text-left py-2 px-4 border-b w-[150px]">Unit</th>
+                  <th className="text-left py-2 px-4 border-b w-[150px]">{unitType}</th>
                   <th className="text-left py-2 px-4 border-b">Notes</th>
                 </tr>
               </thead>
@@ -704,7 +766,6 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
                   // Calculate the actual index in the full notes array
                   const actualIndex = pageIndex * notesPerPage + index
                   const unitProp = getUnitProperty(note)
-
                   return (
                     <tr key={index}>
                       <td className="py-2 px-4 border-b">
@@ -712,7 +773,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
                           <EditableText
                             value={note[unitProp]}
                             onChange={(value) => handleNoteChange(actualIndex, unitProp, value)}
-                            placeholder="Unit"
+                            placeholder={unitType}
                           />
                         ) : (
                           note[unitProp]

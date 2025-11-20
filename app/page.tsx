@@ -160,6 +160,12 @@ function UploadForm() {
       console.log("[v0] Starting Excel file processing...")
       const installationData = await parseExcelFile(file)
 
+      console.log("[DEBUG] Raw parsed data length:", installationData.length)
+console.log("[DEBUG] First 3 rows:", installationData.slice(0, 3))
+console.log("[DEBUG] Last 3 rows:", installationData.slice(-3))
+console.log("[DEBUG] Checking for duplicates - unique units:", 
+  [...new Set(installationData.map(item => item.Unit))].length)
+
       if (installationData.length === 0) {
         alert("No valid installation data found in the file")
         setIsProcessing(false)

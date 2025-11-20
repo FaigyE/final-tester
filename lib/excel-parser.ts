@@ -335,15 +335,13 @@ const formattedData = parsedCsvData.map((row: any, index: number) => {
   formattedRow[key] = value
 
   // Also add lowercase version for case-insensitive matching
-  formattedRow[key.toLowerCase()] = value
+  
 
   // Add common variations of column names for better matching
   if (key.toLowerCase().includes("kitchen") && key.toLowerCase().includes("aerator")) {
     formattedRow["Kitchen Aerator"] = value
   }
-  if (key.toLowerCase().includes("bathroom") && key.toLowerCase().includes("aerator")) {
-    formattedRow["Bathroom aerator"] = value
-  }
+
   if (key.toLowerCase().includes("shower") && key.toLowerCase().includes("head")) {
     formattedRow["Shower Head"] = value
   }

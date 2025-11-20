@@ -8,6 +8,7 @@ import { useReportContext } from "@/lib/report-context"
 // Import the formatNote function
 import { formatNote } from "@/lib/utils/aerator-helpers"
 import { getStoredNotes, getFinalDetailForUnit, getStoredDetails } from "@/lib/notes"
+import { getNotesAndDetails } from "@/lib/notes"
 
 interface EnhancedPdfButtonProps {
   customerInfo: CustomerInfo
@@ -230,88 +231,95 @@ export default function EnhancedPdfButton({
   }
 
   // Updated findColumnName function to prioritize columns with data
-  const findColumnName = (possibleNames: string[], dataToUse: InstallationData[]): string | null => {
-    if (!dataToUse || dataToUse.length === 0) return null
+const findColumnName = (possibleNames: string[], dataToUse: InstallationData[]): string | null => {
+  if (!dataToUse || dataToUse.length === 0) return null
 
-    console.log("PDF: Looking for columns:", possibleNames)
-    console.log("PDF: Available columns:", Object.keys(dataToUse[0]))
+  console.log("PDF: Looking for columns:", possibleNames)
+  console.log("PDF: Available columns:", Object.keys(dataToUse[0]))
 
-    const matchingColumns: { key: string; hasData: boolean; dataCount: number; sampleValues: string[] }[] = []
+  const matchingColumns: { key: string; hasData: boolean; dataCount: number; sampleValues: string[] }[] = []
 
-    for (const key of Object.keys(dataToUse[0])) {
-      let isMatch = false
+  for (const key of Object.keys(dataToUse[0])) {
+    // SKIP LEAK COLUMNS - they are not installation columns
+    const lowerKey = key.toLowerCase()
+    if (lowerKey.includes('leak') || lowerKey.includes('issue')) {
+      continue
+    }
 
-      if (possibleNames.includes(key)) {
-        isMatch = true
-      }
+    let isMatch = false
 
-      if (!isMatch) {
-        for (const possibleName of possibleNames) {
-          if (key.toLowerCase() === possibleName.toLowerCase()) {
-            isMatch = true
-            break
-          }
+    if (possibleNames.includes(key)) {
+      isMatch = true
+    }
+
+    if (!isMatch) {
+      for (const possibleName of possibleNames) {
+        if (key.toLowerCase() === possibleName.toLowerCase()) {
+          isMatch = true
+          break
         }
       }
+    }
 
-      if (!isMatch) {
-        for (const possibleName of possibleNames) {
-          if (
-            key.toLowerCase().includes(possibleName.toLowerCase()) ||
-            possibleName.toLowerCase().includes(key.toLowerCase())
-          ) {
-            isMatch = true
-            break
-          }
+    if (!isMatch) {
+      for (const possibleName of possibleNames) {
+        if (
+          key.toLowerCase().includes(possibleName.toLowerCase()) ||
+          possibleName.toLowerCase().includes(key.toLowerCase())
+        ) {
+          isMatch = true
+          break
         }
       }
+    }
 
-      if (isMatch) {
-        const meaningfulValues = dataToUse
-          .map((item) => item[key])
-          .filter((value) => {
-            if (!value) return false
-            const trimmed = String(value).trim().toLowerCase()
-            return (
-              trimmed !== "" &&
-              trimmed !== "0" &&
-              trimmed !== "no" &&
-              trimmed !== "n/a" &&
-              trimmed !== "na" &&
-              trimmed !== "none"
-            )
-          })
-
-        const dataCount = meaningfulValues.length
-        const sampleValues = meaningfulValues.slice(0, 5).map((v) => String(v))
-
-        matchingColumns.push({
-          key,
-          hasData: dataCount > 0,
-          dataCount,
-          sampleValues,
+    if (isMatch) {
+      const meaningfulValues = dataToUse
+        .map((item) => item[key])
+        .filter((value) => {
+          if (!value) return false
+          const trimmed = String(value).trim().toLowerCase()
+          return (
+            trimmed !== "" &&
+            trimmed !== "0" &&
+            trimmed !== "no" &&
+            trimmed !== "n/a" &&
+            trimmed !== "na" &&
+            trimmed !== "none" &&
+            trimmed !== "nan"
+          )
         })
 
-        console.log(
-          `PDF: Found matching column "${key}" with ${dataCount} meaningful data entries. Sample values:`,
-          sampleValues,
-        )
-      }
+      const dataCount = meaningfulValues.length
+      const sampleValues = meaningfulValues.slice(0, 5).map((v) => String(v))
+
+      matchingColumns.push({
+        key,
+        hasData: dataCount > 0,
+        dataCount,
+        sampleValues,
+      })
+
+      console.log(
+        `PDF: Found matching column "${key}" with ${dataCount} meaningful data entries. Sample values:`,
+        sampleValues,
+      )
     }
-
-    if (matchingColumns.length === 0) {
-      console.log("PDF: No matching columns found")
-      return null
-    }
-
-    matchingColumns.sort((a, b) => b.dataCount - a.dataCount)
-
-    const selectedColumn = matchingColumns[0].key
-    console.log(`PDF: Selected column "${selectedColumn}" with ${matchingColumns[0].dataCount} meaningful data entries`)
-    console.log(`PDF: Sample values from selected column:`, matchingColumns[0].sampleValues)
-
-    return selectedColumn
   }
+
+  if (matchingColumns.length === 0) {
+    console.log("PDF: No matching columns found")
+    return null
+  }
+
+  matchingColumns.sort((a, b) => b.dataCount - a.dataCount)
+
+  const selectedColumn = matchingColumns[0].key
+  console.log(`PDF: Selected column "${selectedColumn}" with ${matchingColumns[0].dataCount} meaningful data entries`)
+  console.log(`PDF: Sample values from selected column:`, matchingColumns[0].sampleValues)
+
+  return selectedColumn
+}
 
   const handleGeneratePdf = async () => {
     // CRITICAL: Load installation data from localStorage first to get deleted rows
@@ -1101,9 +1109,33 @@ export default function EnhancedPdfButton({
         })),
       )
 
-      const hasKitchenAeratorData =
-        kitchenAeratorColumn &&
-        filteredData.some((item) => item[kitchenAeratorColumn] && item[kitchenAeratorColumn] !== "")
+console.log("PDF: Checking column visibility with filteredData:", {
+  dataLength: filteredData.length,
+  firstItem: filteredData[0],
+  kitchenAeratorColumn,
+  sampleKitchenValues: kitchenAeratorColumn
+    ? filteredData.slice(0, 5).map(item => item[kitchenAeratorColumn])
+    : []
+})
+
+const hasKitchenAeratorData =
+  kitchenAeratorColumn &&
+  filteredData.some((item) => {
+    const rawValue = item[kitchenAeratorColumn]
+    if (rawValue !== null && rawValue !== undefined && rawValue !== '') {
+      const trimmedValue = String(rawValue).trim()
+      const hasData = trimmedValue !== "" && trimmedValue !== "0" && trimmedValue.toLowerCase() !== "nan"
+      if (hasData) {
+        console.log("PDF: Found kitchen aerator data:", rawValue, "->", trimmedValue)
+      }
+      return hasData
+    }
+    return false
+  })
+
+console.log("PDF: hasKitchenAeratorData =", hasKitchenAeratorData)
+
+
       const hasBathroomAeratorData =
         bathroomAeratorColumn &&
         filteredData.some((item) => item[bathroomAeratorColumn] && item[bathroomAeratorColumn] !== "")
@@ -1315,56 +1347,101 @@ export default function EnhancedPdfButton({
                   : `0.8 GPF (${consolidated.toiletQuantity})`
                 : ""
 
-          // CRITICAL FIX: Use the details system for the notes column
-          const unitValue = unitColumn ? item[unitColumn] : item.Unit
-          
-          // Compile leak notes for this unit
-          let compiledNote = ""
-          if (item["Leak Issue Kitchen Faucet"]) {
-            const leakValue = String(item["Leak Issue Kitchen Faucet"]).trim().toLowerCase()
-            if (leakValue === "light") {
-              compiledNote += "Light leak from kitchen faucet. "
-            } else if (leakValue === "moderate") {
-              compiledNote += "Moderate leak from kitchen faucet. "
-            } else if (leakValue === "heavy") {
-              compiledNote += "Heavy leak from kitchen faucet. "
-            } else if (leakValue === "dripping" || leakValue === "driping") {
-              compiledNote += "Dripping from kitchen faucet. "
-            } else if (leakValue && leakValue !== "0" && leakValue !== "") {
-              compiledNote += "Leak from kitchen faucet. "
-            }
-          }
-          
-          if (item["Leak Issue Bath Faucet"]) {
-            const leakValue = String(item["Leak Issue Bath Faucet"]).trim().toLowerCase()
-            if (leakValue === "light") {
-              compiledNote += "Light leak from bathroom faucet. "
-            } else if (leakValue === "moderate") {
-              compiledNote += "Moderate leak from bathroom faucet. "
-            } else if (leakValue === "heavy") {
-              compiledNote += "Heavy leak from bathroom faucet. "
-            } else if (leakValue === "dripping" || leakValue === "driping") {
-              compiledNote += "Dripping from bathroom faucet. "
-            } else if (leakValue && leakValue !== "0" && leakValue !== "") {
-              compiledNote += "Leak from bathroom faucet. "
-            }
-          }
-          
-          if (item["Tub Spout/Diverter Leak Issue"]) {
-            const leakValue = String(item["Tub Spout/Diverter Leak Issue"]).trim()
-            if (leakValue === "Light") {
-              compiledNote += "Light leak from tub spout/diverter. "
-            } else if (leakValue === "Moderate") {
-              compiledNote += "Moderate leak from tub spout/diverter. "
-            } else if (leakValue === "Heavy") {
-              compiledNote += "Heavy leak from tub spout/diverter. "
-            } else if (leakValue && leakValue !== "0" && leakValue !== "") {
-              compiledNote += "Leak from tub spout/diverter. "
-            }
-          }
-          
-          // First try edited details, then try getFinalDetailForUnit with compiled note
-          const valuesToCheck = [
+// CRITICAL FIX: Use the details system for the notes column
+const unitValue = unitColumn ? item[unitColumn] : item.Unit
+
+// Get notes from the unified notes system (includes CSV selected cells)
+const { note: csvSelectedNotes, detail: unitDetail } = (() => {
+  try {
+    let selectedCells: Record<string, string[]> = {}
+    let selectedNotesColumns: string[] = []
+    const storedSelectedCells = localStorage.getItem("selectedCells")
+    const storedSelectedNotesColumns = localStorage.getItem("selectedNotesColumns")
+    if (storedSelectedCells) selectedCells = JSON.parse(storedSelectedCells)
+    if (storedSelectedNotesColumns) selectedNotesColumns = JSON.parse(storedSelectedNotesColumns)
+    
+    const notesAndDetails = getNotesAndDetails({
+      installationData: filteredData,
+      unitColumn: unitColumn || "Unit",
+      selectedCells,
+      selectedNotesColumns,
+    })
+    
+    // Find the matching unit (handle both original and numbered units)
+    const baseUnit = String(unitValue || "").replace(/\s+\d+$/, "") // Remove numbering
+    let found = notesAndDetails.find(nd => nd.unit === unitValue)
+    
+    // If not found with numbered name, try base unit
+    if (!found) {
+      found = notesAndDetails.find(nd => nd.unit === baseUnit)
+    }
+    
+    if (found) return { note: found.note, detail: found.detail }
+    return { note: "", detail: "" }
+  } catch (error) {
+    console.error("PDF: Error getting notes/details for unit:", unitValue, error)
+    return { note: "", detail: "" }
+  }
+})()
+
+// Compile leak notes for this unit
+let compiledNote = ""
+if (item["Leak Issue Kitchen Faucet"]) {
+  const leakValue = String(item["Leak Issue Kitchen Faucet"]).trim().toLowerCase()
+  if (leakValue === "light") {
+    compiledNote += "Light leak from kitchen faucet. "
+  } else if (leakValue === "moderate") {
+    compiledNote += "Moderate leak from kitchen faucet. "
+  } else if (leakValue === "heavy") {
+    compiledNote += "Heavy leak from kitchen faucet. "
+  } else if (leakValue === "dripping" || leakValue === "driping") {
+    compiledNote += "Dripping from kitchen faucet. "
+  } else if (leakValue && leakValue !== "0" && leakValue !== "") {
+    compiledNote += "Leak from kitchen faucet. "
+  }
+}
+
+if (item["Leak Issue Bath Faucet"]) {
+  const leakValue = String(item["Leak Issue Bath Faucet"]).trim().toLowerCase()
+  if (leakValue === "light") {
+    compiledNote += "Light leak from bathroom faucet. "
+  } else if (leakValue === "moderate") {
+    compiledNote += "Moderate leak from bathroom faucet. "
+  } else if (leakValue === "heavy") {
+    compiledNote += "Heavy leak from bathroom faucet. "
+  } else if (leakValue === "dripping" || leakValue === "driping") {
+    compiledNote += "Dripping from bathroom faucet. "
+  } else if (leakValue && leakValue !== "0" && leakValue !== "") {
+    compiledNote += "Leak from bathroom faucet. "
+  }
+}
+
+if (item["Tub Spout/Diverter Leak Issue"]) {
+  const leakValue = String(item["Tub Spout/Diverter Leak Issue"]).trim()
+  if (leakValue === "Light") {
+    compiledNote += "Light leak from tub spout/diverter. "
+  } else if (leakValue === "Moderate") {
+    compiledNote += "Moderate leak from tub spout/diverter. "
+  } else if (leakValue === "Heavy") {
+    compiledNote += "Heavy leak from tub spout/diverter. "
+  } else if (leakValue && leakValue !== "0" && leakValue !== "") {
+    compiledNote += "Leak from tub spout/diverter. "
+  }
+}
+
+// Combine CSV selected notes with leak notes
+let combinedNotes = ""
+if (csvSelectedNotes && csvSelectedNotes.trim()) {
+  combinedNotes = csvSelectedNotes.trim() + " "
+}
+if (compiledNote.trim()) {
+  combinedNotes += compiledNote.trim()
+}
+
+// Determine the final text based on whether unit was accessed
+let finalNoteText = ""
+
+const valuesToCheck = [
   kitchenAerator,
   bathroomAerator,
   showerHead,
@@ -1375,23 +1452,20 @@ const allEmptyOrUnable = valuesToCheck.every(
   v => v === "Unable" || v === "" || v === "—"
 )
 
-// Determine the final text based on whether unit was accessed
-let finalNoteText = ""
-
-// If user edited the note, always show the updated note, even if allEmptyOrUnable
+// If user edited the detail, always show the updated detail
 if (latestEditedDetails[unitValue || ""]) {
   finalNoteText = latestEditedDetails[unitValue || ""]
-  console.log(`PDF: Unit ${unitValue} - using user-edited note: "${finalNoteText}"`)
+  console.log(`PDF: Unit ${unitValue} - using user-edited detail: "${finalNoteText}"`)
 } else if (allEmptyOrUnable) {
   // Show "Unit not accessed" or "Room not accessed" based on unitType
   finalNoteText = `${unitType} not accessed`
   console.log(`PDF: Unit ${unitValue} - not accessed, using: "${finalNoteText}"`)
 } else {
-  // Use compiled note or fallback
-  finalNoteText = getFinalDetailForUnit(unitValue || "", compiledNote.trim())
+  // Use combined notes (CSV selected + leaks) or unitDetail
+  finalNoteText = combinedNotes.trim() || unitDetail || ""
 }
 
-console.log(`PDF: Details for unit ${unitValue}:`, finalNoteText)
+console.log(`PDF: Final details for unit ${unitValue}:`, finalNoteText)
 
           // Calculate note lines
           let noteLines: string[] = []
