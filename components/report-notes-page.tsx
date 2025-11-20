@@ -4,9 +4,10 @@ import { useReportContext } from "@/lib/report-context"
 import EditableText from "@/components/editable-text"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Plus, Trash2 } from "lucide-react"
 import { formatNote } from "@/lib/utils/aerator-helpers"
-import { getUnifiedNotes, updateStoredNote, getStoredNotes } from "@/lib/notes"
+import { getNotesAndDetails, updateStoredNote, updateStoredDetail, getStoredNotes } from "@/lib/notes"
 
 interface Note {
   unit: string
@@ -24,9 +25,46 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
   const { setNotes, sectionTitles, setSectionTitles } = useReportContext()
   // Add state to track edited notes
   const [editedNotes, setEditedNotes] = useState<Note[]>([])
+  // Add state for sync checkbox - default to true (checked)
+  const [syncNotesAndDetails, setSyncNotesAndDetails] = useState<boolean>(true)
+  // Add state to track unitType
+  const [unitType, setUnitType] = useState<"Unit" | "Room">("Unit")
 
   // Get installation data from localStorage directly (same as details page)
   const [installationData, setInstallationData] = useState<any[]>([])
+
+  // Load unitType from localStorage on mount
+  useEffect(() => {
+    try {
+      const storedUnitType = localStorage.getItem("unitType")
+      if (storedUnitType) {
+        const parsedUnitType = JSON.parse(storedUnitType) as "Unit" | "Room"
+        setUnitType(parsedUnitType)
+        console.log("Notes: Loaded unitType from localStorage:", parsedUnitType)
+      }
+    } catch (error) {
+      console.error("Notes: Error loading unitType:", error)
+    }
+  }, [])
+
+  // Listen for unitType changes
+  useEffect(() => {
+    const handleUnitTypeChange = () => {
+      try {
+        const storedUnitType = localStorage.getItem("unitType")
+        if (storedUnitType) {
+          const parsedUnitType = JSON.parse(storedUnitType) as "Unit" | "Room"
+          setUnitType(parsedUnitType)
+          console.log("Notes: Updated unitType from event:", parsedUnitType)
+        }
+      } catch (error) {
+        console.error("Notes: Error handling unitType change:", error)
+      }
+    }
+
+    window.addEventListener("unitTypeChanged", handleUnitTypeChange)
+    return () => window.removeEventListener("unitTypeChanged", handleUnitTypeChange)
+  }, [])
 
   // Load installation data from localStorage
   useEffect(() => {
@@ -81,7 +119,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
       const keyLower = key.toLowerCase()
       for (const keyword of unitKeywords) {
         if (keyLower.includes(keyword)) {
-          console.log(`Notes: Found column containing ${keyword}: ${key}`)
+          console.log(`Notes: Fo column containing ${keyword}: ${key}`)
           return key
         }
       }
@@ -188,7 +226,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
     return formatNote(noteText + notes.trim())
   }
 
-  // Initialize editedNotes using unified notes system
+  // Initialize editedNotes using notes/details system
   useEffect(() => {
     console.log("Notes: Processing installation data, length:", installationData.length)
 
@@ -226,9 +264,9 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
       console.error("Notes: Error loading selected data from preview:", error)
     }
 
-    // Use unified notes system to get notes
-    console.log("Notes: Using unified notes system...")
-    const unifiedNotes = getUnifiedNotes({
+    // Use notes/details system to get notes
+    console.log("Notes: Using notes/details system...")
+    const notesAndDetails = getNotesAndDetails({
       installationData,
       unitColumn,
       selectedCells,
@@ -236,7 +274,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
     })
 
     // Filter to only include notes with content (for notes section)
-    const filteredNotes = unifiedNotes.filter((note) => {
+    const filteredNotes = notesAndDetails.filter((note) => {
       const hasContent = note.note && note.note.trim() !== ""
       console.log(`Notes: Filtering note for unit ${note.unit}, has content: ${hasContent}, note: "${note.note}"`)
       return hasContent
@@ -244,7 +282,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
 
     console.log("Notes: Final processed notes:", filteredNotes.length, "notes")
 
-    // Update state with unified notes
+    // Update state with notes
     setEditedNotes(filteredNotes)
     setNotes(filteredNotes)
 
@@ -252,11 +290,11 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
     localStorage.setItem("reportNotes", JSON.stringify(filteredNotes))
   }, [installationData, setNotes])
 
-  // Listen for unified notes updates
+  // Listen for notes/details updates
   useEffect(() => {
     const handleNotesUpdate = () => {
-      console.log("Notes: Received unified notes update event")
-      // Re-process notes when unified notes are updated
+      console.log("Notes: Received notes/details update event")
+      // Re-process notes when notes/details are updated
       if (installationData.length > 0) {
         const unitColumn = findUnitColumn(installationData)
         if (unitColumn) {
@@ -278,14 +316,14 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
             console.error("Notes: Error loading selected data:", error)
           }
 
-          const unifiedNotes = getUnifiedNotes({
+          const notesAndDetails = getNotesAndDetails({
             installationData,
             unitColumn,
             selectedCells,
             selectedNotesColumns,
           })
 
-          const filteredNotes = unifiedNotes.filter((note) => {
+          const filteredNotes = notesAndDetails.filter((note) => {
             const hasContent = note.note && note.note.trim() !== ""
             return hasContent
           })
@@ -297,8 +335,8 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
       }
     }
 
-    window.addEventListener("unifiedNotesUpdated", handleNotesUpdate)
-    return () => window.removeEventListener("unifiedNotesUpdated", handleNotesUpdate)
+    window.addEventListener("unitNotesUpdated", handleNotesUpdate)
+    return () => window.removeEventListener("unitNotesUpdated", handleNotesUpdate)
   }, [installationData, setNotes])
 
   // Filter out notes without valid unit numbers - use editedNotes directly for reactivity
@@ -323,12 +361,40 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
     return note.note && note.note.trim() !== ""
   })
 
+
+  // Handle duplicate unit names by appending a number to each duplicate
+  const getRenamedNotes = (notes: Note[]) => {
+    const unitCount: Record<string, number> = {}
+    const unitTotal: Record<string, number> = {}
+    // First pass: count total occurrences
+    for (const note of notes) {
+      const key = String(note.unit || '').trim()
+      if (!key) continue
+      unitTotal[key] = (unitTotal[key] || 0) + 1
+    }
+    // Second pass: rename duplicates
+    return notes.map((note) => {
+      const key = String(note.unit || '').trim()
+      if (!key) return note
+      unitCount[key] = (unitCount[key] || 0) + 1
+      let displayUnit = key
+      if (unitTotal[key] > 1) {
+        displayUnit = `${key} ${unitCount[key]}`
+      }
+      return {
+        ...note,
+        unit: displayUnit,
+      }
+    })
+  }
+
+  const renamedNotes = getRenamedNotes(filteredNotes)
+
   // Split notes into pages of 15 items each
   const notesPerPage = 15
   const notePages = []
-
-  for (let i = 0; i < filteredNotes.length; i += notesPerPage) {
-    notePages.push(filteredNotes.slice(i, i + notesPerPage))
+  for (let i = 0; i < renamedNotes.length; i += notesPerPage) {
+    notePages.push(renamedNotes.slice(i, i + notesPerPage))
   }
 
   // Add function to sort notes by unit number
@@ -370,10 +436,16 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
           if (storedNotes[oldUnit] !== undefined) {
             // Move the note from old unit to new unit
             updateStoredNote(value, storedNotes[oldUnit])
+            
+            // If sync is enabled, also update details
+            if (syncNotesAndDetails) {
+              updateStoredDetail(value, storedNotes[oldUnit])
+            }
+            
             // Remove the old unit entry
             const updatedStoredNotes = { ...storedNotes }
             delete updatedStoredNotes[oldUnit]
-            localStorage.setItem("unifiedNotes", JSON.stringify(updatedStoredNotes))
+            localStorage.setItem("unitNotes", JSON.stringify(updatedStoredNotes))
           }
         }
 
@@ -420,6 +492,13 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
         // Update the note content using unified system
         const unitValue = updatedNotes[index].unit
         updateStoredNote(unitValue, value)
+        
+        // If sync is enabled, also update the details
+        if (syncNotesAndDetails) {
+          updateStoredDetail(unitValue, value)
+          console.log(`Synced note to details for unit ${unitValue}`)
+        }
+        
         updatedNotes[index][field] = value
       } else {
         updatedNotes[index][field] = value
@@ -470,7 +549,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
         const storedNotes = getStoredNotes()
         const updatedStoredNotes = { ...storedNotes }
         delete updatedStoredNotes[noteToDelete.unit]
-        localStorage.setItem("unifiedNotes", JSON.stringify(updatedStoredNotes))
+        localStorage.setItem("unitNotes", JSON.stringify(updatedStoredNotes))
 
         // Also remove the unit from the details section if it was added there
         const additionalRows = JSON.parse(localStorage.getItem("additionalDetailRows") || "[]")
@@ -536,51 +615,70 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
         <img
           src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Screenshot%202025-04-29%20115501-BD1uw5tVq9PtVYW6Z6FKM1i8in6GeV.png"
           alt="GreenLight Logo"
-          className="h-24" // Increased from h-16
+          className="h-24"
           crossOrigin="anonymous"
         />
       </div>
 
       {/* Notes content */}
       <div className="mb-16">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold">
-            {isEditable ? (
-              <EditableText
-                value={notesTitle}
-                onChange={handleSectionTitleChange}
-                placeholder="Section Title"
-                className="text-xl font-bold"
-              />
-            ) : (
-              notesTitle
-            )}
-          </h2>
-          {isEditable && (
-            <Button onClick={handleAddNote} size="sm" className="flex items-center gap-2">
-              <Plus className="h-4 w-4" />
-              Add Note
-            </Button>
-          )}
+        <div className="sticky top-0 bg-white z-10 pb-4 border-b mb-6">
+          <div className="flex items-center justify-between pt-2">
+            <h2 className="text-xl font-bold">
+              {isEditable ? (
+                <EditableText
+                  value={notesTitle}
+                  onChange={handleSectionTitleChange}
+                  placeholder="Section Title"
+                  className="text-xl font-bold"
+                />
+              ) : (
+                notesTitle
+              )}
+            </h2>
+            <div className="flex items-center gap-4">
+              {isEditable && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="sync-notes-details"
+                      checked={syncNotesAndDetails}
+                      onCheckedChange={(checked) => setSyncNotesAndDetails(checked as boolean)}
+                    />
+                    <label
+                      htmlFor="sync-notes-details"
+                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                    >
+                      Sync notes with details section
+                    </label>
+                  </div>
+                  <Button onClick={handleAddNote} size="sm" className="flex items-center gap-2">
+                    <Plus className="h-4 w-4" />
+                    Add Note
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
-        <table className="w-full">
+        <table className="w-full notes-table">
           <thead>
             <tr>
-              <th className="text-left py-2 px-4 border-b">Unit</th>
+              <th className="text-left py-2 px-4 border-b w-[150px]">{unitType}</th>
               <th className="text-left py-2 px-4 border-b">Notes</th>
               {isEditable && <th className="text-left py-2 px-4 border-b w-16">Actions</th>}
             </tr>
           </thead>
           <tbody>
-            {filteredNotes.length === 0 ? (
+            {renamedNotes.length === 0 ? (
               <tr>
                 <td colSpan={isEditable ? 3 : 2} className="py-4 px-4 text-center text-gray-500">
                   No notes with leak issues found
                 </td>
               </tr>
             ) : (
-              filteredNotes.map((note, index) => {
+              renamedNotes.map((note, index) => {
                 const unitProp = getUnitProperty(note)
                 return (
                   <tr key={index}>
@@ -589,13 +687,13 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
                         <EditableText
                           value={note[unitProp]}
                           onChange={(value) => handleNoteChange(index, unitProp, value)}
-                          placeholder="Unit"
+                          placeholder={unitType}
                         />
                       ) : (
                         note[unitProp]
                       )}
                     </td>
-                    <td className="py-2 px-4 border-b">
+                    <td className="py-2 px-4 border-b whitespace-pre-line">
                       {isEditable ? (
                         <EditableText
                           value={note.note}
@@ -647,7 +745,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
             <img
               src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Screenshot%202025-04-29%20115501-BD1uw5tVq9PtVYW6Z6FKM1i8in6GeV.png"
               alt="GreenLight Logo"
-              className="h-24" // Increased from h-16
+              className="h-24"
               crossOrigin="anonymous"
             />
           </div>
@@ -659,7 +757,7 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
             <table className="w-full">
               <thead>
                 <tr>
-                  <th className="text-left py-2 px-4 border-b">Unit</th>
+                  <th className="text-left py-2 px-4 border-b w-[150px]">{unitType}</th>
                   <th className="text-left py-2 px-4 border-b">Notes</th>
                 </tr>
               </thead>
@@ -668,7 +766,6 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
                   // Calculate the actual index in the full notes array
                   const actualIndex = pageIndex * notesPerPage + index
                   const unitProp = getUnitProperty(note)
-
                   return (
                     <tr key={index}>
                       <td className="py-2 px-4 border-b">
@@ -676,13 +773,13 @@ export default function ReportNotesPage({ notes, isPreview = true, isEditable = 
                           <EditableText
                             value={note[unitProp]}
                             onChange={(value) => handleNoteChange(actualIndex, unitProp, value)}
-                            placeholder="Unit"
+                            placeholder={unitType}
                           />
                         ) : (
                           note[unitProp]
                         )}
                       </td>
-                      <td className="py-2 px-4 border-b">
+                      <td className="py-2 px-4 border-b whitespace-pre-line">
                         {isEditable ? (
                           <EditableText
                             value={note.note}

@@ -4,47 +4,71 @@ import EditableText from "@/components/editable-text"
 import { getAeratorDescription, formatNote } from "@/lib/utils/aerator-helpers"
 import { useReportContext } from "@/lib/report-context"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Plus, Trash2 } from "lucide-react"
-import { updateStoredNote, getStoredNotes } from "@/lib/notes"
+import { updateStoredNote, updateStoredDetail, getStoredNotes, getNotesAndDetails, getStoredDetails } from "@/lib/notes"
 
-interface InstallationData {
-  Unit: string
-  "Shower Head"?: string
-  "Bathroom aerator"?: string
-  "Kitchen Aerator"?: string
-  "Leak Issue Kitchen Faucet"?: string
-  "Leak Issue Bath Faucet"?: string
-  "Tub Spout/Diverter Leak Issue"?: string
-  Notes?: string
-  [key: string]: string | undefined
-}
+import type { InstallationData } from "@/lib/types"
+
+
 
 interface ReportDetailPageProps {
   installationData: InstallationData[]
   isPreview?: boolean
   isEditable?: boolean
+  unitTypeProp?: string
+  onDeleteUnit?: (unit: string) => void
 }
 
 export default function ReportDetailPage({
   installationData,
   isPreview = true,
   isEditable = true,
+  unitTypeProp,
+  onDeleteUnit,
 }: ReportDetailPageProps) {
   const { sectionTitles, setSectionTitles } = useReportContext()
 
   // State to store edited notes
+  const [unitType, setUnitType] = useState<"Unit" | "Room">((unitTypeProp as "Unit" | "Room") || "Unit")  // ← Initialize with prop value
   const [editedNotes, setEditedNotes] = useState<Record<string, string>>({})
+  const [editedDetails, setEditedDetails] = useState<Record<string, string>>({})
   const [editedInstallations, setEditedInstallations] = useState<Record<string, Record<string, string>>>({})
   const [editedUnits, setEditedUnits] = useState<Record<string, string>>({})
   const [additionalRows, setAdditionalRows] = useState<InstallationData[]>([])
+  // Add state for sync checkbox - default to true (checked)
+  const [syncDetailsAndNotes, setSyncDetailsAndNotes] = useState<boolean>(true)
   const [columnHeaders, setColumnHeaders] = useState({
-    unit: "Unit",
-    kitchen: "Kitchen Installed",
-    bathroom: "Bathroom Installed",
-    shower: "Shower Installed",
+    unit: unitType,
+    kitchen: "Kitchen Aerator Installed",
+    bathroom: "Bathroom Aerator Installed",
+    shower: "Shower Head Installed",
     toilet: "Toilet Installed",
     notes: "Notes",
   })
+  // Add installationData state for UI updates
+  const [installationDataState, setInstallationData] = useState<InstallationData[]>(installationData)
+
+  // Load installation data from localStorage first, fallback to prop
+  useEffect(() => {
+    try {
+      const storedData = localStorage.getItem("installationData")
+      if (storedData) {
+        const parsedData = JSON.parse(storedData)
+        setInstallationData(parsedData)
+        console.log("Loaded installation data from localStorage:", parsedData.length, "items")
+      } else {
+        setInstallationData(installationData)
+        // Save initial data to localStorage if not present
+        localStorage.setItem("installationData", JSON.stringify(installationData))
+      }
+    } catch (error) {
+      console.error("Error loading installation data from localStorage:", error)
+      setInstallationData(installationData)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
 
   const findUnitColumn = (data: InstallationData[]): string | null => {
     if (!data || data.length === 0) return null
@@ -65,9 +89,9 @@ export default function ReportDetailPage({
   }
 
   const findColumnName = (possibleNames: string[]): string | null => {
-    if (!installationData || installationData.length === 0) return null
+    if (!installationDataState || installationDataState.length === 0) return null
 
-    const firstItem = installationData[0]
+    const firstItem = installationDataState[0]
     const keys = Object.keys(firstItem)
 
     // Look for exact matches first
@@ -93,10 +117,10 @@ export default function ReportDetailPage({
   }
 
   const findAllShowerColumns = (): string[] => {
-    if (!installationData || installationData.length === 0) return []
+    if (!installationDataState || installationDataState.length === 0) return []
 
     const showerColumns: string[] = []
-    const keys = Object.keys(installationData[0])
+    const keys = Object.keys(installationDataState[0])
 
     for (const key of keys) {
       if (key.toLowerCase().includes("shower")) {
@@ -117,7 +141,7 @@ export default function ReportDetailPage({
       }
     }
 
-    return "No Touch."
+    return "Unable"
   }
 
   const kitchenAeratorColumn = findColumnName(["Kitchen Aerator", "kitchen aerator", "kitchen", "kitchen aerators"])
@@ -143,220 +167,299 @@ export default function ReportDetailPage({
     return getToiletColumnInfo(item).installed
   }
 
-  const compileNotesForUnit = (item: InstallationData, includeNotAccessed = true): string => {
-    let notes = ""
-
-    if (item["Leak Issue Kitchen Faucet"]) notes += "Dripping from kitchen faucet. "
-    if (item["Leak Issue Bath Faucet"]) notes += "Dripping from bathroom faucet. "
-    if (item["Tub Spout/Diverter Leak Issue"] === "Light") notes += "Light leak from tub spout/ diverter. "
-    if (item["Tub Spout/Diverter Leak Issue"] === "Moderate") notes += "Moderate leak from tub spout/diverter. "
-    if (item["Tub Spout/Diverter Leak Issue"] === "Heavy") notes += "Heavy leak from tub spout/ diverter. "
-
-    //if (item.Notes && item.Notes.trim() !== "") {
-      //notes += item.Notes + " "
-    //}
-
-    return formatNote(notes.trim())
+  // Use the new notes/details system
+  // Fix: When unitValue is a renamed duplicate (e.g., '101 2'), only update and retrieve notes for that specific display name
+  const getNotesAndDetailsForUnit = (unitValue: string): { note: string; detail: string } => {
+    try {
+      let selectedCells: Record<string, string[]> = {}
+      let selectedNotesColumns: string[] = []
+      const storedSelectedCells = localStorage.getItem("selectedCells")
+      const storedSelectedNotesColumns = localStorage.getItem("selectedNotesColumns")
+      if (storedSelectedCells) selectedCells = JSON.parse(storedSelectedCells)
+      if (storedSelectedNotesColumns) selectedNotesColumns = JSON.parse(storedSelectedNotesColumns)
+      const notesAndDetails = getNotesAndDetails({
+        installationData,
+        unitColumn: unitColumn || "Unit",
+        selectedCells,
+        selectedNotesColumns,
+      })
+      // Always use the full display unit name for matching
+      let found = notesAndDetails.find(nd => nd.unit === unitValue)
+      if (found) return { note: found.note, detail: found.detail }
+      return { note: "", detail: "" }
+    } catch (error) {
+      console.error("Error getting notes/details for unit:", unitValue, error)
+      return { note: "", detail: "" }
+    }
   }
 
-  const unitColumn = findUnitColumn(installationData)
-  const allData = [...installationData, ...additionalRows]
+  const unitColumn = findUnitColumn(installationDataState)
+  const allData = [...installationDataState, ...additionalRows]
 
-  const filteredData = (() => {
-    const result = []
+    // Number duplicate unit values for display
+    const filteredData = (() => {
+      const result: InstallationData[] = [];
+      const unitCount: Record<string, number> = {};
+      const unitTotal: Record<string, number> = {};
 
-    for (let i = 0; i < allData.length; i++) {
-      const item = allData[i]
-      const unitValue = unitColumn ? item[unitColumn] : item.Unit
-
-      if (!unitValue || String(unitValue).trim() === "") continue
-
-      result.push(item)
-    }
-
-    // Group installations by unit and read quantities from specific Excel columns
-    const consolidatedData: Record<
-      string,
-      {
-        unit: string
-        kitchenQuantity: number
-        bathroomQuantity: number
-        showerADAQuantity: number
-        showerRegularQuantity: number
-        toiletQuantity: number
-        notes: string[]
-        originalItem: InstallationData
-      }
-    > = {}
-
-    // Helper function to find specific quantity columns
-    const findSpecificColumns = () => {
-      if (!result.length) return {}
-
-      const firstItem = result[0]
-      const keys = Object.keys(firstItem)
-
-      const columns = {
-        // Kitchen aerator column (for type, quantity always 1 if exists)
-        kitchenAerator: keys.find((key) => {
-          const lowerKey = key.toLowerCase()
-          return lowerKey.includes("kitchen") && lowerKey.includes("aerator")
-        }),
-
-        // Bathroom aerator columns (count both guest and master)
-        bathroomAeratorGuest: keys.find((key) => {
-          const lowerKey = key.toLowerCase()
-          return lowerKey.includes("bathroom") && lowerKey.includes("aerator") && lowerKey.includes("guest")
-        }),
-        bathroomAeratorMaster: keys.find((key) => {
-          const lowerKey = key.toLowerCase()
-          return lowerKey.includes("bathroom") && lowerKey.includes("aerator") && lowerKey.includes("master")
-        }),
-
-        // Shower columns (read actual quantities)
-        adaShowerHead: keys.find((key) => {
-          const lowerKey = key.toLowerCase()
-          return lowerKey.includes("ada") && lowerKey.includes("shower")
-        }),
-        regularShowerHead: keys.find((key) => {
-          const lowerKey = key.toLowerCase()
-          return (
-            lowerKey.includes("shower") &&
-            (lowerKey.includes("head") || lowerKey === "showerhead") &&
-            !lowerKey.includes("ada")
-          )
-        }),
-
-        // Toilet installation column (read direct quantity)
-        toiletInstalled: keys.find((key) => {
-          const lowerKey = key.toLowerCase()
-          return lowerKey.includes("toilet") && lowerKey.includes("install")
-        }),
+      // First pass: count total occurrences
+      for (const item of allData) {
+        const unitValue = unitColumn ? item[unitColumn] : item.Unit;
+        const key = String(unitValue || "").trim();
+        if (!key) continue;
+        unitTotal[key] = (unitTotal[key] || 0) + 1;
       }
 
-      console.log("Found specific columns:", columns)
-      return columns
-    }
+      // Second pass: process and number duplicates
+      for (const item of allData) {
+        const unitValue = unitColumn ? item[unitColumn] : item.Unit;
+        const key = String(unitValue || "").trim();
+        if (!key) continue;
+        unitCount[key] = (unitCount[key] || 0) + 1;
+        let displayUnit = key;
+        if (unitTotal[key] > 1) {
+          displayUnit = `${key} ${unitCount[key]}`;
+        }
+        // Clone item and override display unit
+        const newItem = { ...item };
+        newItem[unitColumn || "Unit"] = displayUnit;
+        newItem.Unit = displayUnit;
+        result.push(newItem);
+      }
 
-    const specificColumns = findSpecificColumns()
+      // ...existing consolidation logic...
+      // Group installations by unit and read quantities from specific Excel columns
+      const consolidatedData: Record<
+        string,
+        {
+          unit: string;
+          kitchenQuantity: number;
+          bathroomQuantity: number;
+          showerADAQuantity: number;
+          showerRegularQuantity: number;
+          toiletQuantity: number;
+          notes: string[];
+          originalItem: InstallationData;
+        }
+      > = {};
 
-    // Process each row and consolidate by unit
-    for (const item of result) {
-      const unitValue = unitColumn ? item[unitColumn] : item.Unit
-      const unitKey = String(unitValue || "").trim()
+      const findSpecificColumns = () => {
+  if (!result.length) return {};
+  const firstItem = result[0];
+  const keys = Object.keys(firstItem);
+  
+  console.log("[DEBUG] All keys in first item:", keys);
+  console.log("[DEBUG] Keys with 'shower':", 
+    keys.filter(k => k.toLowerCase().includes("shower"))
+  );
+        const columns: {
+          kitchenAerator?: string;
+          bathroomAeratorColumns?: string[];
+          adaShowerHead?: string;
+          regularShowerHead?: string;
+          toiletInstalled?: string;
+        } = {
+          kitchenAerator: keys.find((key) => {
+            const lowerKey = key.toLowerCase();
+            return lowerKey.includes("kitchen") && lowerKey.includes("aerator");
+          }),
+          bathroomAeratorColumns: keys.filter((key) => {
+            const lowerKey = key.toLowerCase();
+            return lowerKey.includes("bathroom") && lowerKey.includes("aerator");
+          }),
+          adaShowerHead: keys.find((key) => {
+      const lowerKey = key.toLowerCase();
+      const matches = lowerKey.includes("ada") && lowerKey.includes("shower");
+      if (matches) console.log(`[DEBUG] Found ADA shower: "${key}"`);
+      return matches;
+    }),
+    regularShowerHead: keys.find((key) => {
+      const lowerKey = key.toLowerCase();
+      const matches = (
+        lowerKey.includes("shower") &&
+        (lowerKey.includes("head") || lowerKey === "showerhead") &&
+        !lowerKey.includes("ada")
+      );
+      if (matches) console.log(`[DEBUG] Found regular shower: "${key}"`);
+      return matches;
+    }),
+          toiletInstalled: keys.find((key) => {
+            const lowerKey = key.toLowerCase();
+            return lowerKey.includes("toilet") && lowerKey.includes("install");
+          }),
+        };
+        return columns;
+      };
 
-      if (!unitKey) continue
+      const specificColumns = findSpecificColumns();
 
-      // Initialize unit data if not exists
-      if (!consolidatedData[unitKey]) {
-        consolidatedData[unitKey] = {
-          unit: unitKey,
-          kitchenQuantity: 0,
-          bathroomQuantity: 0,
-          showerADAQuantity: 0,
-          showerRegularQuantity: 0,
-          toiletQuantity: 0,
-          notes: [],
-          originalItem: item,
+      for (const item of result) {
+        const unitValue = unitColumn ? item[unitColumn] : item.Unit;
+        const unitKey = String(unitValue || "").trim();
+        if (!unitKey) continue;
+        if (!consolidatedData[unitKey]) {
+          consolidatedData[unitKey] = {
+            unit: unitKey,
+            kitchenQuantity: 0,
+            bathroomQuantity: 0,
+            showerADAQuantity: 0,
+            showerRegularQuantity: 0,
+            toiletQuantity: 0,
+            notes: [],
+            originalItem: item,
+          };
+        }
+        // ...existing logic for quantities and notes...
+        // Kitchen
+        if (specificColumns.kitchenAerator && item[specificColumns.kitchenAerator]) {
+          const kitchenValue = String(item[specificColumns.kitchenAerator]).trim();
+          if (kitchenValue && kitchenValue !== "" && kitchenValue !== "0") {
+            consolidatedData[unitKey].kitchenQuantity = 1;
+          }
+        }
+        // Bathroom
+        let bathroomCount = 0;
+        if (specificColumns.bathroomAeratorColumns && specificColumns.bathroomAeratorColumns.length > 0) {
+          for (const bathroomCol of specificColumns.bathroomAeratorColumns) {
+            if (item[bathroomCol]) {
+              const bathroomValue = String(item[bathroomCol]).trim();
+              if (bathroomValue && bathroomValue !== "" && bathroomValue !== "0") {
+                bathroomCount += 1;
+              }
+            }
+          }
+        }
+        consolidatedData[unitKey].bathroomQuantity = bathroomCount;
+        // Shower
+        if (specificColumns.adaShowerHead) {
+          const adaValue = item[specificColumns.adaShowerHead];
+          const adaQuantity = adaValue && adaValue !== '' ? Number.parseInt(String(adaValue as string)) || 0 : 0;
+          consolidatedData[unitKey].showerADAQuantity = adaQuantity;
+        } else {
+          consolidatedData[unitKey].showerADAQuantity = 0;
+        }
+        if (specificColumns.regularShowerHead) {
+          const regularValue = item[specificColumns.regularShowerHead];
+          const regularQuantity = regularValue && regularValue !== '' ? Number.parseInt(String(regularValue as string)) || 0 : 0;
+          consolidatedData[unitKey].showerRegularQuantity = regularQuantity;
+        } else {
+          consolidatedData[unitKey].showerRegularQuantity = 0;
+        }
+        // Toilet
+        if (specificColumns.toiletInstalled && item[specificColumns.toiletInstalled]) {
+          const toiletQuantity = Number.parseInt(String(item[specificColumns.toiletInstalled] as string)) || 0;
+          consolidatedData[unitKey].toiletQuantity = toiletQuantity;
+        } else {
+          consolidatedData[unitKey].toiletQuantity = 0;
+        }
+        // Notes
+        const { note: unitNote } = getNotesAndDetailsForUnit(unitKey);
+        if (unitNote && unitNote.trim()) {
+          consolidatedData[unitKey].notes.push(unitNote.trim());
         }
       }
 
-      console.log(`Processing Unit ${unitKey}:`)
+      const consolidatedResult = Object.values(consolidatedData).map((unitData) => {
+        const consolidatedItem = { ...unitData.originalItem };
+        (consolidatedItem as any)._kitchenQuantity = unitData.kitchenQuantity;
+        (consolidatedItem as any)._bathroomQuantity = unitData.bathroomQuantity;
+        (consolidatedItem as any)._showerADAQuantity = unitData.showerADAQuantity;
+        (consolidatedItem as any)._showerRegularQuantity = unitData.showerRegularQuantity;
+        (consolidatedItem as any)._toiletQuantity = unitData.toiletQuantity;
+        (consolidatedItem as any)._consolidatedNotes = [...new Set(unitData.notes)].join(" ");
+        return consolidatedItem;
+      });
 
-      // Kitchen: Always 1 if kitchen aerator column has data
-      if (specificColumns.kitchenAerator && item[specificColumns.kitchenAerator]) {
-        const kitchenValue = String(item[specificColumns.kitchenAerator]).trim()
-        if (kitchenValue && kitchenValue !== "" && kitchenValue !== "0") {
-          consolidatedData[unitKey].kitchenQuantity = 1
-          console.log(`Kitchen quantity for ${unitKey}: 1 (has data: ${kitchenValue})`)
+      return consolidatedResult.sort((a, b) => {
+        const unitA = unitColumn ? a[unitColumn] : a.Unit;
+        const unitB = unitColumn ? b[unitColumn] : b.Unit;
+        const numA = Number.parseInt(String(unitA));
+        const numB = Number.parseInt(String(unitB));
+        if (!isNaN(numA) && !isNaN(numB)) {
+          return numA - numB;
         }
-      }
-
-      // Bathroom: Count guest + master columns (each counts as 1 if has data)
-      let bathroomCount = 0
-      if (specificColumns.bathroomAeratorGuest && item[specificColumns.bathroomAeratorGuest]) {
-        const guestValue = String(item[specificColumns.bathroomAeratorGuest]).trim()
-        if (guestValue && guestValue !== "" && guestValue !== "0") {
-          bathroomCount += 1
-          console.log(`Bathroom Guest for ${unitKey}: +1 (has data: ${guestValue})`)
-        }
-      }
-      if (specificColumns.bathroomAeratorMaster && item[specificColumns.bathroomAeratorMaster]) {
-        const masterValue = String(item[specificColumns.bathroomAeratorMaster]).trim()
-        if (masterValue && masterValue !== "" && masterValue !== "0") {
-          bathroomCount += 1
-          console.log(`Bathroom Master for ${unitKey}: +1 (has data: ${masterValue})`)
-        }
-      }
-      consolidatedData[unitKey].bathroomQuantity = bathroomCount
-
-      // Shower: Read actual quantities from both columns
-      if (specificColumns.adaShowerHead && item[specificColumns.adaShowerHead]) {
-        const adaQuantity = Number.parseInt(String(item[specificColumns.adaShowerHead])) || 0
-        consolidatedData[unitKey].showerADAQuantity = adaQuantity
-        console.log(`ADA Shower quantity for ${unitKey}: ${adaQuantity}`)
-      }
-      if (specificColumns.regularShowerHead && item[specificColumns.regularShowerHead]) {
-        const regularQuantity = Number.parseInt(String(item[specificColumns.regularShowerHead])) || 0
-        consolidatedData[unitKey].showerRegularQuantity = regularQuantity
-        console.log(`Regular Shower quantity for ${unitKey}: ${regularQuantity}`)
-      }
-
-      // Toilet: Read direct quantity from toilets installed column
-      if (specificColumns.toiletInstalled && item[specificColumns.toiletInstalled]) {
-        const toiletQuantity = Number.parseInt(String(item[specificColumns.toiletInstalled])) || 0
-        consolidatedData[unitKey].toiletQuantity = toiletQuantity
-        console.log(`Toilet quantity for ${unitKey}: ${toiletQuantity}`)
-      }
-
-      // Collect notes
-      const compiledNotes = compileNotesForUnit(item, true)
-      if (compiledNotes && compiledNotes.trim()) {
-        consolidatedData[unitKey].notes.push(compiledNotes.trim())
-      }
-    }
-
-    // Convert back to array format with new quantity data
-    const consolidatedResult = Object.values(consolidatedData).map((unitData) => {
-      // Create a new item with quantity information
-      const consolidatedItem = { ...unitData.originalItem }
-
-      // Store quantities in the item for later use
-      consolidatedItem._kitchenQuantity = unitData.kitchenQuantity
-      consolidatedItem._bathroomQuantity = unitData.bathroomQuantity
-      consolidatedItem._showerADAQuantity = unitData.showerADAQuantity
-      consolidatedItem._showerRegularQuantity = unitData.showerRegularQuantity
-      consolidatedItem._toiletQuantity = unitData.toiletQuantity
-      consolidatedItem._consolidatedNotes = [...new Set(unitData.notes)].join(" ")
-
-      return consolidatedItem
-    })
-
-    return consolidatedResult.sort((a, b) => {
-      const unitA = unitColumn ? a[unitColumn] : a.Unit
-      const unitB = unitColumn ? b[unitColumn] : b.Unit
-
-      const numA = Number.parseInt(String(unitA))
-      const numB = Number.parseInt(String(unitB))
-
-      if (!isNaN(numA) && !isNaN(numB)) {
-        return numA - numB
-      }
-
-      return String(unitA).localeCompare(String(unitB), undefined, { numeric: true, sensitivity: "base" })
-    })
-  })()
+        return String(unitA).localeCompare(String(unitB), undefined, { numeric: true, sensitivity: "base" });
+      });
+    })();
 
   // Check what columns to show
-  const hasKitchenAerators = filteredData.some((item) => item._kitchenQuantity > 0)
-  const hasBathroomAerators = filteredData.some((item) => item._bathroomQuantity > 0)
-  const hasShowers = filteredData.some((item) => item._showerADAQuantity > 0 || item._showerRegularQuantity > 0)
-  const hasToilets = filteredData.some((item) => item._toiletQuantity > 0)
+  const hasKitchenAerators = filteredData.some((item) => Number(item._kitchenQuantity) > 0);
+const hasBathroomAerators = filteredData.some((item) => {
+  const bathroomQty = Number(item._bathroomQuantity);
+  console.log(`Checking bathroom for unit ${item.Unit || item[unitColumn || 'Unit']}: quantity=${bathroomQty}`);
+  return bathroomQty > 0;
+});
+
+  const hasShowers = filteredData.some((item) => Number(item._showerADAQuantity) > 0 || Number(item._showerRegularQuantity) > 0);
+  const hasToilets = filteredData.some((item) => Number(item._toiletQuantity) > 0);
   const hasNotes = true
+
+useEffect(() => {
+  const newUnitType = (unitTypeProp as "Unit" | "Room") || "Unit"
+  setUnitType(newUnitType)
+  setColumnHeaders(prev => ({ ...prev, unit: newUnitType }))
+  
+  // NEW: Save and dispatch
+  localStorage.setItem("unitType", JSON.stringify(newUnitType))
+  window.dispatchEvent(new Event("unitTypeChanged"))
+}, [unitTypeProp])
+
+useEffect(() => {
+  const handleUnitTypeChange = () => {
+    const storedUnitType = localStorage.getItem("unitType")
+    if (storedUnitType) {
+      const parsedUnitType = JSON.parse(storedUnitType) as "Unit" | "Room"
+      setUnitType(parsedUnitType)
+      setColumnHeaders(prev => ({ ...prev, unit: parsedUnitType }))
+    }
+  }
+  
+  window.addEventListener("unitTypeChanged", handleUnitTypeChange)
+  return () => window.removeEventListener("unitTypeChanged", handleUnitTypeChange)
+}, [])
+
+
+  // Load CSV preview data from localStorage and listen for unified notes updates
+  useEffect(() => {
+    try {
+      // Load selected cells from CSV preview
+      const selectedCellsData = localStorage.getItem("selectedCells")
+      if (selectedCellsData) {
+        const selectedCells = JSON.parse(selectedCellsData)
+        console.log("Details: Loaded CSV preview selected cells:", selectedCells)
+      }
+      
+      // Load selected notes columns from CSV preview
+      const selectedNotesColumnsData = localStorage.getItem("selectedNotesColumns")
+      if (selectedNotesColumnsData) {
+        const selectedNotesColumns = JSON.parse(selectedNotesColumnsData)
+        console.log("Details: Loaded CSV preview selected columns:", selectedNotesColumns)
+      }
+    } catch (error) {
+      console.error("Details: Error loading CSV preview data:", error)
+    }
+  }, [])
+
+  // Listen for notes/details updates
+  useEffect(() => {
+    const handleNotesUpdate = () => {
+      setEditedNotes({ ...getStoredNotes() })
+    }
+    const handleDetailsUpdate = () => {
+      setEditedDetails({ ...getStoredDetails() })
+    }
+    window.addEventListener("unifiedNotesUpdated", handleNotesUpdate)
+    window.addEventListener("unitDetailsUpdated", handleDetailsUpdate)
+    return () => {
+      window.removeEventListener("unifiedNotesUpdated", handleNotesUpdate)
+      window.removeEventListener("unitDetailsUpdated", handleDetailsUpdate)
+    }
+  }, [])
 
   // Event handlers
   const handleNoteEdit = (unit: string, value: string) => {
     if (isEditable) {
+      // Always update the note for the full display unit name (e.g., '101 2')
       updateStoredNote(unit, value)
       setEditedNotes((prev) => ({
         ...prev,
@@ -364,7 +467,25 @@ export default function ReportDetailPage({
       }))
     }
   }
-
+ 
+const handleDetailEdit = (unit: string, value: string) => {
+  if (isEditable) {
+    // Always update the detail for the full display unit name (e.g., '101 2')
+    updateStoredDetail(unit, value)
+    // If sync is enabled, only sync if this display unit already has a note
+    if (syncDetailsAndNotes) {
+      const existingNotes = getStoredNotes()
+      if (existingNotes[unit]) {
+        updateStoredNote(unit, value)
+        console.log(`Synced detail to notes for unit ${unit}`)
+      }
+    }
+    setEditedDetails((prev) => ({
+      ...prev,
+      [unit]: value,
+    }))
+  }
+}
   const handleInstallationEdit = (unit: string, type: string, value: string) => {
     if (isEditable) {
       setEditedInstallations((prev) => ({
@@ -419,13 +540,63 @@ export default function ReportDetailPage({
   }
 
   const removeRow = (unitToRemove: string) => {
+    console.log("Removing unit:", unitToRemove)
+    
+    // Remove from additionalRows
     setAdditionalRows((prev) => prev.filter((row) => row.Unit !== unitToRemove))
+
+    // Remove from installationDataState and update localStorage
+    setInstallationData((prev) => {
+      const unitColumn = findUnitColumn(prev)
+      const filtered = prev.filter((row) => {
+        const rowUnit = unitColumn ? row[unitColumn] : row.Unit
+        return rowUnit !== unitToRemove
+      })
+      // Update localStorage immediately
+      localStorage.setItem("installationData", JSON.stringify(filtered))
+      console.log("Updated installationData in localStorage, new length:", filtered.length)
+      return filtered
+    })
+
+    // Remove from additionalDetailRows in localStorage
+    try {
+      const additionalRows = JSON.parse(localStorage.getItem("additionalDetailRows") || "[]")
+      const unitColumn = findUnitColumn(additionalRows)
+      const filteredAdditionalRows = additionalRows.filter((row: any) => {
+        const rowUnit = unitColumn ? row[unitColumn] : row.Unit
+        return rowUnit !== unitToRemove
+      })
+      localStorage.setItem("additionalDetailRows", JSON.stringify(filteredAdditionalRows))
+      console.log("Updated additionalDetailRows in localStorage")
+    } catch (error) {
+      console.error("Error removing unit from additionalDetailRows:", error)
+    }
+
+    // Remove from details only (not notes)
+    try {
+      const details = JSON.parse(localStorage.getItem("unitDetails") || "{}")
+      if (details[unitToRemove] !== undefined) {
+        delete details[unitToRemove]
+        localStorage.setItem("unitDetails", JSON.stringify(details))
+        console.log("Removed unit from unitDetails")
+      }
+    } catch (error) {
+      console.error("Error removing unit from unitDetails:", error)
+    }
+
+    setEditedDetails((prev) => {
+      const updated = { ...prev }
+      delete updated[unitToRemove]
+      return updated
+    })
+    
+    console.log("Row removal complete for unit:", unitToRemove)
   }
 
-  // Load stored notes on component mount
+  // Load stored notes/details on component mount
   useEffect(() => {
-    const storedNotes = getStoredNotes()
-    setEditedNotes(storedNotes)
+    setEditedNotes(getStoredNotes())
+    setEditedDetails(getStoredDetails())
   }, [])
 
   if (!installationData || installationData.length === 0) {
@@ -439,18 +610,41 @@ export default function ReportDetailPage({
   return (
     <div className="space-y-8">
       {/* Section Title */}
-      <div className="text-center">
-        <h2 className="text-xl font-bold mb-4">
-          {isEditable ? (
-            <EditableText
-              value={sectionTitles?.detailsTitle || "Detailed Unit Information"}
-              onChange={handleSectionTitleChange}
-              placeholder="Section Title"
-            />
-          ) : (
-            sectionTitles?.detailsTitle || "Detailed Unit Information"
+      <div className="sticky top-0 bg-white z-10 pb-4 border-b">
+        <div className="flex items-center justify-between pt-2">
+          <h2 className="text-xl font-bold">
+            {isEditable ? (
+              <EditableText
+                value={sectionTitles?.detailsTitle || "Detailed Unit Information"}
+                onChange={handleSectionTitleChange}
+                placeholder="Section Title"
+              />
+            ) : (
+              sectionTitles?.detailsTitle || "Detailed Unit Information"
+            )}
+          </h2>
+          {isEditable && isPreview && (
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="sync-details-notes"
+                  checked={syncDetailsAndNotes}
+                  onCheckedChange={(checked) => setSyncDetailsAndNotes(checked as boolean)}
+                />
+                <label
+                  htmlFor="sync-details-notes"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                >
+                  Sync details with notes section
+                </label>
+              </div>
+              <Button onClick={addNewRow} variant="outline" size="sm">
+                <Plus className="mr-2 h-4 w-4" />
+                Add Row
+              </Button>
+            </div>
           )}
-        </h2>
+        </div>
       </div>
 
       {/* Preview Mode - Single Table */}
@@ -526,12 +720,12 @@ export default function ReportDetailPage({
                   <th className="text-left py-2 px-2 border-b">
                     {isEditable ? (
                       <EditableText
-                        value={columnHeaders.notes}
-                        onChange={(value) => handleColumnHeaderChange("notes", value)}
-                        placeholder="Notes"
+                        value={"Details"}
+                        onChange={() => {}}
+                        placeholder="Details"
                       />
                     ) : (
-                      columnHeaders.notes
+                      "Details"
                     )}
                   </th>
                 )}
@@ -549,40 +743,56 @@ export default function ReportDetailPage({
                   if (unitValue !== undefined && editedInstallations[unitValue]?.kitchen !== undefined) {
                     return editedInstallations[unitValue]!.kitchen
                   }
-                  return item._kitchenQuantity > 0 ? "1.0 GPM (1)" : "No Touch."
+                  return Number(item._kitchenQuantity) > 0 ? "1.0 GPM (1)" : "Unable"
                 })()
 
                 const bathroomAerator = (() => {
                   if (unitValue !== undefined && editedInstallations[unitValue]?.bathroom !== undefined) {
                     return editedInstallations[unitValue]!.bathroom
                   }
-                  if (item._bathroomQuantity > 0) {
-                    return `1.0 GPM (${item._bathroomQuantity})`
+                  if (Number(item._bathroomQuantity) > 0) {
+                    return Number(item._bathroomQuantity) === 1
+                      ? "1.0 GPM"
+                      : `1.0 GPM (${item._bathroomQuantity})`
                   }
-                  return "No Touch."
+                  return "Unable"
                 })()
 
                 const shower = (() => {
                   if (unitValue !== undefined && editedInstallations[unitValue]?.shower !== undefined) {
-                    return editedInstallations[unitValue]!.shower
+                  return editedInstallations[unitValue]!.shower
                   }
 
                   const parts = []
-                  if (item._showerRegularQuantity > 0) {
+                  if (Number(item._showerRegularQuantity) > 0) {
+                  if (Number(item._showerRegularQuantity) === 1 && Number(item._showerADAQuantity) === 0) {
+                    parts.push("1.75 GPM")
+                  } else {
                     parts.push(`1.75 GPM (${item._showerRegularQuantity})`)
                   }
-                  if (item._showerADAQuantity > 0) {
+                  }
+                  if (Number(item._showerADAQuantity) > 0) {
+                  if (Number(item._showerADAQuantity) === 1 && Number(item._showerRegularQuantity) === 0) {
+                    parts.push("1.5 GPM")
+                  } else {
                     parts.push(`1.5 GPM (${item._showerADAQuantity})`)
                   }
+                  }
 
-                  return parts.length > 0 ? parts.join("; ") : "No Touch."
+                  // Add a comma if both types exist
+                  return parts.length > 1 ? parts.join(", ") : (parts.length > 0 ? parts[0] : "Unable")
                 })()
 
                 const toilet = (() => {
                   if (unitValue !== undefined && editedInstallations[unitValue]?.toilet !== undefined) {
                     return editedInstallations[unitValue]!.toilet
                   }
-                  return item._toiletQuantity > 0 ? `0.8 GPF (${item._toiletQuantity})` : ""
+                    if (Number(item._toiletQuantity) > 0) {
+                    return Number(item._toiletQuantity) === 1
+                      ? "0.8 GPF"
+                      : `0.8 GPF (${item._toiletQuantity})`
+                    }
+                    return ""
                 })()
 
                 return (
@@ -682,35 +892,60 @@ export default function ReportDetailPage({
                     )}
                     {hasNotes && (
                       <td className="py-2 px-2 border-b">
-                        {isEditable ? (
-                          <EditableText
-                            value={
-                              editedNotes[unitValue ?? ""] !== undefined
-                                ? editedNotes[unitValue ?? ""]
-                                : item._consolidatedNotes
-                            }
-                            onChange={(value) => handleNoteEdit(unitValue ?? "", value)}
-                            placeholder="Notes"
-                          />
-                        ) : editedNotes[unitValue ?? ""] !== undefined ? (
-                          editedNotes[unitValue ?? ""]
-                        ) : (
-                          item._consolidatedNotes
-                        )}
+                        {(() => {
+                          // Check if all columns are empty or 'Unable'
+                          const valuesToCheck = [
+                            kitchenAerator,
+                            bathroomAerator,
+                            shower,
+                            toilet
+                          ];
+                          const allEmptyOrUnable = valuesToCheck.every(
+                            v => v === "Unable" || v === ""
+                          );
+                          
+                          // Get the full details from the notes/details system
+                          const notesAndDetailsInfo = getNotesAndDetailsForUnit(unitValue ?? "");
+                          
+                          let detailsText =
+                            editedDetails[unitValue ?? ""] !== undefined
+                              ? editedDetails[unitValue ?? ""]
+                              : (allEmptyOrUnable
+                                  ? `${unitType === "Room" ? "Room" : "Unit"} not accessed`
+                                  : notesAndDetailsInfo.detail);
+
+                          if (isEditable) {
+                            return (
+                              <EditableText
+                                value={detailsText}
+                                onChange={(value) => handleDetailEdit(unitValue ?? "", value)}
+                                placeholder="Details"
+                              />
+                            );
+                          } else {
+                            return (
+                              <div>
+                                {detailsText}
+                                <div className="text-xs text-blue-600 mt-1">
+                                  📄 Details
+                                </div>
+                              </div>
+                            );
+                          }
+                        })()}
                       </td>
                     )}
                     {isEditable && (
                       <td className="py-2 px-2 border-b">
-                        {isAdditionalRow && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => removeRow(unitValue ?? "")}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
+                        <Button
+                          onClick={() => removeRow(unitValue ?? "")}
+                          size="sm"
+                          variant="outline"
+                          className="h-8 w-8 p-0 text-red-600 hover:text-red-700"
+                          title="Delete unit"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </td>
                     )}
                   </tr>
@@ -743,7 +978,7 @@ export default function ReportDetailPage({
                     {hasBathroomAerators && <th className="text-left py-2 px-2 border-b">{columnHeaders.bathroom}</th>}
                     {hasShowers && <th className="text-left py-2 px-2 border-b">{columnHeaders.shower}</th>}
                     {hasToilets && <th className="text-left py-2 px-2 border-b">{columnHeaders.toilet}</th>}
-                    {hasNotes && <th className="text-left py-2 px-2 border-b">{columnHeaders.notes}</th>}
+                    {hasNotes && <th className="text-left py-2 px-2 border-b">Details</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -755,7 +990,12 @@ export default function ReportDetailPage({
                           if (unitColumn && editedInstallations[item[unitColumn] ?? ""]?.kitchen !== undefined) {
                             return editedInstallations[item[unitColumn] ?? ""]!.kitchen
                           }
-                          return item._kitchenQuantity > 0 ? "1.0 GPM (1)" : "No Touch."
+                            if (Number(item._kitchenQuantity) > 0) {
+                            return Number(item._kitchenQuantity) === 1
+                              ? "1.0 GPM"
+                              : `1.0 GPM (${item._kitchenQuantity})`
+                            }
+                            return "Unable"
                         })()}
                       </td>
                     )}
@@ -765,10 +1005,12 @@ export default function ReportDetailPage({
                           if (unitColumn && editedInstallations[item[unitColumn] ?? ""]?.bathroom !== undefined) {
                             return editedInstallations[item[unitColumn] ?? ""]!.bathroom
                           }
-                          if (item._bathroomQuantity > 0) {
-                            return `1.0 GPM (${item._bathroomQuantity})`
+                          if (Number(item._bathroomQuantity) > 0) {
+                            return Number(item._bathroomQuantity) === 1
+                              ? "1.0 GPM"
+                              : `1.0 GPM (${item._bathroomQuantity})`
                           }
-                          return "No Touch."
+                          return "Unable"
                         })()}
                       </td>
                     )}
@@ -779,15 +1021,23 @@ export default function ReportDetailPage({
                             return editedInstallations[item[unitColumn] ?? ""]!.shower
                           }
 
-                          const parts = []
-                          if (item._showerRegularQuantity > 0) {
-                            parts.push(`1.75 GPM (${item._showerRegularQuantity})`)
-                          }
-                          if (item._showerADAQuantity > 0) {
-                            parts.push(`1.5 GPM (${item._showerADAQuantity})`)
-                          }
+                            const parts = []
+                            if (Number(item._showerRegularQuantity) > 0) {
+                            if (Number(item._showerRegularQuantity) === 1 && Number(item._showerADAQuantity) === 0) {
+                              parts.push("1.75 GPM")
+                            } else {
+                              parts.push(`1.75 GPM (${item._showerRegularQuantity})`)
+                            }
+                            }
+                            if (Number(item._showerADAQuantity) > 0) {
+                            if (Number(item._showerADAQuantity) === 1 && Number(item._showerRegularQuantity) === 0) {
+                              parts.push("1.5 GPM")
+                            } else {
+                              parts.push(`1.5 GPM (${item._showerADAQuantity})`)
+                            }
+                            }
 
-                          return parts.length > 0 ? parts.join("; ") : "No Touch."
+                          return parts.length > 0 ? parts.join("\n") : "Unable"
                         })()}
                       </td>
                     )}
@@ -797,15 +1047,27 @@ export default function ReportDetailPage({
                           if (unitColumn && editedInstallations[item[unitColumn] ?? ""]?.toilet !== undefined) {
                             return editedInstallations[item[unitColumn] ?? ""]!.toilet
                           }
-                          return item._toiletQuantity > 0 ? `0.8 GPF (${item._toiletQuantity})` : ""
+                            if (Number(item._toiletQuantity) > 0) {
+                            return Number(item._toiletQuantity) === 1
+                              ? "0.8 GPF"
+                              : `0.8 GPF (${item._toiletQuantity})`
+                            }
+                            return ""
                         })()}
                       </td>
                     )}
                     {hasNotes && (
                       <td className="py-2 px-2 border-b">
-                        {editedNotes[item.Unit ?? ""] !== undefined
-                          ? editedNotes[item.Unit ?? ""]
-                          : item._consolidatedNotes}
+                        {editedDetails[item.Unit ?? ""] !== undefined
+                          ? editedDetails[item.Unit ?? ""]
+                          : (
+                            <div>
+                              {getNotesAndDetailsForUnit(item.Unit ?? "").detail}
+                              <div className="text-xs text-blue-600 mt-1">
+                                📄 Details
+                              </div>
+                            </div>
+                          )}
                       </td>
                     )}
                   </tr>

@@ -1,4 +1,5 @@
 import type { ImageData, ProcessedImage, InstallationData, Note } from "@/lib/types"
+import { getNotesAndDetails } from "@/lib/notes"
 
 // Enhanced keyword matching for different types of issues
 const ISSUE_KEYWORDS = {
@@ -26,8 +27,12 @@ export function matchImageWithNotes(
   installationData: InstallationData[],
   notes: Note[],
 ): ProcessedImage {
-  const unitData = installationData.find((data) => data.Unit === image.unit)
-  const unitNotes = notes.filter((note) => note.unit === image.unit)
+  const unitData = installationData.find((data) =>
+    (data.Unit?.toString().toLowerCase?.() ?? "") === (image.unit?.toString().toLowerCase?.() ?? "")
+  )
+  const unitNotes = notes.filter((note) =>
+    (note.unit?.toString().toLowerCase?.() ?? "") === (image.unit?.toString().toLowerCase?.() ?? "")
+  )
 
   const matchedNotes: string[] = []
   let suggestedCaption = image.caption || ""
@@ -280,47 +285,15 @@ export function suggestCaptionsForImages(
   })
 }
 
-// Enhanced unit extraction with better pattern matching
 export function extractUnitFromFilename(filename: string): string {
   console.log(`Extracting unit from filename: "${filename}"`)
 
-  const patterns = [
-    /^([A-Z]?\d+[A-Z]?)/i, // A01, B02, 1A, 2B at start
-    /[_\-\s]([A-Z]?\d+[A-Z]?)[_\-\s.]/i, // _A01_, -B02-, A01.
-    /unit[_\-\s]*([A-Z]?\d+[A-Z]?)/i, // unit_A01, unit-B02
-    /apt[_\-\s]*([A-Z]?\d+[A-Z]?)/i, // apt_A01, apt-B02
-    /room[_\-\s]*([A-Z]?\d+[A-Z]?)/i, // room_A01, room-B02
-    /([A-Z]?\d+[A-Z]?)(?:[_\-\s]|$)/i, // A01 followed by separator or end
-  ]
-
-  const patternNames = [
-    "Start of filename",
-    "Surrounded by separators",
-    "After 'unit'",
-    "After 'apt'",
-    "After 'room'",
-    "Followed by separator or end",
-  ]
-
-  for (let i = 0; i < patterns.length; i++) {
-    const pattern = patterns[i]
-    const match = filename.match(pattern)
-    if (match) {
-      const extractedUnit = match[1].toUpperCase()
-      console.log(`Pattern ${i + 1} (${patternNames[i]}) matched: "${match[0]}" -> extracted unit: "${extractedUnit}"`)
-
-      if (extractedUnit.length >= 2 || i === 0) {
-        // Prefer units with 2+ chars, or always accept first pattern
-        return extractedUnit
-      } else {
-        console.log(`Skipping short unit "${extractedUnit}" from pattern ${i + 1}, continuing to next pattern`)
-        continue
-      }
-    }
-  }
-
-  console.log(`No unit extracted from filename: "${filename}"`)
-  return ""
+  // Remove file extension
+  const nameWithoutExtension = filename.replace(/\.[^/.]+$/, '')
+  
+  console.log(`Using full filename as unit: "${nameWithoutExtension}"`)
+  
+  return nameWithoutExtension
 }
 
 export function normalizeUnit(unit: string): string {
@@ -397,7 +370,50 @@ export function setCaptionsFromUnitNotes(
     return images
   }
 
-  // Find the three leak columns
+  // Load CSV preview data from localStorage to get comprehensive notes
+  let selectedCells: Record<string, string[]> = {}
+  let selectedNotesColumns: string[] = []
+
+  try {
+    const storedSelectedCells = localStorage.getItem("selectedCells")
+    const storedSelectedNotesColumns = localStorage.getItem("selectedNotesColumns")
+
+    if (storedSelectedCells) {
+      selectedCells = JSON.parse(storedSelectedCells)
+      console.log("🔥 Loaded selected cells from CSV preview:", selectedCells)
+    }
+
+    if (storedSelectedNotesColumns) {
+      selectedNotesColumns = JSON.parse(storedSelectedNotesColumns)
+      console.log("🔥 Loaded selected notes columns from CSV preview:", selectedNotesColumns)
+    }
+  } catch (error) {
+    console.error("🔥 Error loading CSV preview data:", error)
+  }
+
+  // Find the unit column
+  const findUnitColumn = (data: InstallationData[]): string | null => {
+    if (!data || data.length === 0) return null
+
+    const firstItem = data[0]
+    const keys = Object.keys(firstItem)
+
+    // Look for "Unit" column first
+    if (keys.includes("Unit")) return "Unit"
+
+    // Look for any column containing "unit"
+    for (const key of keys) {
+      if (key.toLowerCase().includes("unit")) return key
+    }
+
+    // Fallback to first column
+    return keys[0]
+  }
+
+  const unitColumn = findUnitColumn(installationData)
+  console.log("🔥 Using unit column:", unitColumn)
+
+  // Find the three leak columns (for backward compatibility)
   const sampleData = installationData[0]
   const columns = Object.keys(sampleData)
 
@@ -428,8 +444,11 @@ export function setCaptionsFromUnitNotes(
   return images.map((image) => {
     console.log(`🔥 Processing image: ${image.filename} for unit ${image.unit}`)
 
-    // Find the unit's data
-    const unitData = installationData.find((data) => data.Unit === image.unit)
+    // Find the unit's data using the detected unit column (case-insensitive)
+    const unitData = installationData.find((data) => {
+      const unitValue = unitColumn ? data[unitColumn] : data.Unit
+      return (unitValue?.toString().toLowerCase?.() ?? "") === (image.unit?.toString().toLowerCase?.() ?? "")
+    })
 
     if (!unitData) {
       console.log(`🔥 Unit ${image.unit} - No unit data found`)
@@ -439,27 +458,26 @@ export function setCaptionsFromUnitNotes(
       }
     }
 
+    // Use the notes page (reportNotes in localStorage) for image descriptions
     let caption = ""
-
-    if (tubLeakColumn && unitData[tubLeakColumn] && unitData[tubLeakColumn].trim()) {
-      const severity = unitData[tubLeakColumn].trim()
-      caption = `${severity} leak from tub spout.`
-      console.log(`🔥 Assigned tub caption: "${caption}"`)
-    } else if (kitchSinkColumn && unitData[kitchSinkColumn] && unitData[kitchSinkColumn].trim()) {
-      const severity = unitData[kitchSinkColumn].trim()
-      caption = `${severity} drip from kitchen faucet.`
-      console.log(`🔥 Assigned kitchen caption: "${caption}"`)
-    } else if (bathSinkColumn && unitData[bathSinkColumn] && unitData[bathSinkColumn].trim()) {
-      const severity = unitData[bathSinkColumn].trim()
-      caption = `${severity} drip from bathroom faucet.`
-      console.log(`🔥 Assigned bathroom caption: "${caption}"`)
-    } else {
+    try {
+      const reportNotesRaw = localStorage.getItem("reportNotes")
+      if (reportNotesRaw) {
+        const reportNotes = JSON.parse(reportNotesRaw)
+        const noteEntry = reportNotes.find((n: any) => n.unit === image.unit)
+        if (noteEntry && noteEntry.note && noteEntry.note.trim()) {
+          caption = noteEntry.note.trim()
+          console.log(`🔥 Using notes page for caption: "${caption}"`)
+        }
+      }
+    } catch (error) {
+      console.error("🔥 Error getting notes from reportNotes:", error)
+    }
+    if (!caption) {
       caption = image.caption || `Unit ${image.unit} installation photo`
       console.log(`🔥 Using fallback caption: "${caption}"`)
     }
-
     console.log(`🔥 Final caption for ${image.filename}: "${caption}"`)
-
     return {
       ...image,
       caption: caption,
@@ -582,7 +600,9 @@ export async function setCaptionsFromAIAnalysis(
         continue
       }
 
-      const unitData = installationData.find((data) => data.Unit === image.unit)
+      const unitData = installationData.find((data) =>
+        (data.Unit?.toString().toLowerCase?.() ?? "") === (image.unit?.toString().toLowerCase?.() ?? "")
+      )
       if (!unitData) {
         console.log(`🤖 ERROR: No unit data found for ${image.unit}`)
         updatedImages.push(image)
@@ -746,8 +766,10 @@ export function setCaptionsFromManualSelection(images: ImageData[], installation
     console.log(`🔧 Processing image: ${image.filename} for unit ${image.unit}`)
     console.log(`🔧 Selected fixture type: ${imageWithFixture.fixtureType || "none"}`)
 
-    // Find the unit's data
-    const unitData = installationData.find((data) => data.Unit === image.unit)
+    // Find the unit's data (case-insensitive)
+    const unitData = installationData.find((data) =>
+      (data.Unit?.toString().toLowerCase?.() ?? "") === (image.unit?.toString().toLowerCase?.() ?? "")
+    )
 
     if (!unitData) {
       console.log(`🔧 Unit ${image.unit} - No unit data found`)

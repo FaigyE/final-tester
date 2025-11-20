@@ -169,7 +169,7 @@ export default function CsvPreviewPage() {
 
     setSelectedCells((prev) => {
       const unitCells = prev[unitValue] || []
-      const cellIdentifier = `${value}` // Removed column name
+      const cellIdentifier = `${value}`
 
       const isSelected = unitCells.includes(cellIdentifier)
 
@@ -194,27 +194,34 @@ export default function CsvPreviewPage() {
     if (!unitValue) return false
 
     const unitCells = selectedCells[unitValue] || []
-    const cellIdentifier = `${getProperCase(column)}: ${value}`
+    const cellIdentifier = `${value}`
     return unitCells.includes(cellIdentifier)
   }
 
   // Process data and continue to report
   const handleContinue = () => {
-    if (!selectedUnitColumn) {
-      alert("Please select a unit column")
-      return
-    }
-
-    // Filter and process the data
-    const processedData = processInstallationData(rawData, selectedUnitColumn, selectedNotesColumns, selectedCells)
-
-    // Store processed data
-    localStorage.setItem("installationData", JSON.stringify(processedData.installationData))
-    localStorage.setItem("toiletCount", JSON.stringify(processedData.toiletCount))
-
-    // Navigate to report
-    router.push("/")
+  if (!selectedUnitColumn) {
+    alert("Please select a unit column")
+    return
   }
+
+  // Filter and process the data
+  const processedData = processInstallationData(rawData, selectedUnitColumn, selectedNotesColumns, selectedCells)
+
+  // Store processed data
+  localStorage.setItem("installationData", JSON.stringify(processedData.installationData))
+  
+  // DON'T overwrite the toilet count - keep the one from the upload form
+  // Only save toilet count if we found a valid one (> 0)
+  if (processedData.toiletCount > 0) {
+    localStorage.setItem("toiletCount", JSON.stringify(processedData.toiletCount))
+  } else {
+    console.log("[CSV Preview] Keeping existing toilet count from upload form")
+  }
+
+  // Navigate to report
+  router.push("/")
+}
 
   // Process installation data with selected configuration
   const processInstallationData = (
@@ -251,93 +258,152 @@ export default function CsvPreviewPage() {
     const { totalCount } = getToiletInfo()
     toiletCount = totalCount
 
-    // Process each row
-    for (let i = 0; i < data.length; i++) {
-      const item = data[i]
-      const unitValue = item[unitColumn]
+    // STEP 1: First pass - collect all unit values to identify duplicates
+  const unitCounts = new Map<string, number>()
+  const tempFilteredData = []
 
-      // Stop at first empty unit
-      if (!unitValue || unitValue.trim() === "") {
-        console.log(`Stopping at row ${i + 1} - empty unit`)
-        break
-      }
+  for (let i = 0; i < data.length; i++) {
+    const item = data[i]
+    const unitValue = item[unitColumn]
 
-      const trimmedUnit = unitValue.trim()
+    // Stop at first empty unit
+    if (!unitValue || unitValue.trim() === "") {
+      console.log(`Stopping at row ${i + 1} - empty unit`)
+      break
+    }
 
-      // Skip invalid units
-      const lowerUnit = trimmedUnit.toLowerCase()
-      const invalidValues = ["total", "sum", "average", "avg", "count", "header", "n/a", "na"]
-      if (invalidValues.some((val) => lowerUnit.includes(val))) {
-        console.log(`Skipping invalid unit: ${trimmedUnit}`)
-        continue
-      }
+    const trimmedUnit = unitValue.trim()
 
-      // Create processed item
-      const processedItem: InstallationData = {
-        Unit: trimmedUnit,
-        "Shower Head": item["Shower Head"] || "",
-        "Bathroom aerator": item["Bathroom aerator"] || "",
-        "Kitchen Aerator": item["Kitchen Aerator"] || "",
-        "Leak Issue Kitchen Faucet": item["Leak Issue Bath Faucet"] || "",
-        "Leak Issue Bath Faucet": item["Leak Issue Bath Faucet"] || "",
-        "Tub Spout/Diverter Leak Issue": item["Tub Spout/Diverter Leak Issue"] || "",
-        Notes: "",
-      }
+    // ... skip invalid units logic (keep as-is) ...
+    const lowerUnit = trimmedUnit.toLowerCase()
+    const invalidValues = ["total", "sum", "average", "avg", "count", "header", "n/a", "na"]
+    if (invalidValues.some((val) => lowerUnit.includes(val))) {
+      console.log(`Skipping invalid unit: ${trimmedUnit}`)
+      continue
+    }
 
-      // Add all original columns
-      Object.keys(item).forEach((key) => {
-        if (item[key] !== undefined) {
+    // Count this unit
+    unitCounts.set(trimmedUnit, (unitCounts.get(trimmedUnit) || 0) + 1)
+    tempFilteredData.push({ item, trimmedUnit })
+  }
+
+  console.log("CSV Preview: Unit counts:", Object.fromEntries(unitCounts))
+
+  // STEP 2: Second pass - assign numbered unit names
+  const currentCounts = new Map<string, number>()
+
+  for (const { item, trimmedUnit } of tempFilteredData) {
+    const totalCount = unitCounts.get(trimmedUnit) || 0
+    const currentCount = currentCounts.get(trimmedUnit) || 0
+    currentCounts.set(trimmedUnit, currentCount + 1)
+
+    // Number duplicates
+    let finalUnitValue = trimmedUnit
+    if (totalCount > 1) {
+      finalUnitValue = `${trimmedUnit} ${currentCount + 1}`
+      console.log(`CSV Preview: Numbering duplicate: "${trimmedUnit}" → "${finalUnitValue}"`)
+    }
+
+    // Create processed item with NUMBERED unit
+    const processedItem: InstallationData = {
+      Unit: finalUnitValue,  // ✅ Now numbered!
+      "Shower Head": item["Shower Head"] || "",
+      "Bathroom aerator": item["Bathroom aerator"] || "",
+      "Kitchen Aerator": item["Kitchen Aerator"] || "",
+      "Leak Issue Kitchen Faucet": item["Leak Issue Kitchen Faucet"] || "",
+      "Leak Issue Bath Faucet": item["Leak Issue Bath Faucet"] || "",
+      "Tub Spout/Diverter Leak Issue": item["Tub Spout/Diverter Leak Issue"] || "",
+      Notes: "",
+    }
+
+    // Add all original columns
+    Object.keys(item).forEach((key) => {
+      if (item[key] !== undefined) {
+        // If this is the unit column, use the numbered value
+        if (key === unitColumn) {
+          processedItem[key] = finalUnitValue
+        } else {
           processedItem[key] = item[key]
         }
-      })
-
-      // Add notes from selected columns
-      let additionalNotes = ""
-
-      // Add notes from selected columns
-      notesColumns.forEach((column) => {
-        const value = item[column]
-        if (value && value.trim() !== "") {
-          const sentenceCaseValue = value.charAt(0).toUpperCase() + value.slice(1).toLowerCase()
-          additionalNotes += `${sentenceCaseValue}. `
-        }
-      })
-
-      // Add notes from selected cells
-      const unitCells = cellSelections[trimmedUnit] || []
-      unitCells.forEach((cellInfo) => {
-        additionalNotes += `${cellInfo}. `
-      })
-
-      if (additionalNotes) {
-        processedItem.Notes = additionalNotes.trim()
       }
-
-      filteredData.push(processedItem)
-    }
-
-    // Sort by unit number
-    filteredData.sort((a, b) => {
-      const numA = Number.parseInt(a.Unit)
-      const numB = Number.parseInt(b.Unit)
-
-      if (!isNaN(numA) && !isNaN(numB)) {
-        return numA - numB
-      }
-
-      return a.Unit.localeCompare(b.Unit, undefined, { numeric: true, sensitivity: "base" })
     })
 
-    // Save the selected cell data to localStorage for the notes section to use
-    console.log("Saving selected cells to localStorage:", cellSelections)
-    localStorage.setItem("selectedCells", JSON.stringify(cellSelections))
-    localStorage.setItem("selectedNotesColumns", JSON.stringify(notesColumns))
-
-    return {
-      installationData: filteredData,
-      toiletCount,
+    // Ensure all unit column variations have the numbered value
+    processedItem[unitColumn] = finalUnitValue
+    if (unitColumn.toLowerCase() !== "unit") {
+      processedItem["unit"] = finalUnitValue
+      processedItem[unitColumn.toLowerCase()] = finalUnitValue
     }
+
+    // Add notes from selected columns
+    let additionalNotes = ""
+    notesColumns.forEach((column) => {
+      const value = item[column]
+      if (value && value.trim() !== "") {
+        const sentenceCaseValue = value.charAt(0).toUpperCase() + value.slice(1).toLowerCase()
+        additionalNotes += `${sentenceCaseValue}. `
+      }
+    })
+
+    // Add notes from selected cells (use the NUMBERED unit for lookup)
+    const unitCells = cellSelections[trimmedUnit] || []  // Use original for lookup
+    unitCells.forEach((cellInfo) => {
+      additionalNotes += `${cellInfo}. `
+    })
+
+    if (additionalNotes) {
+      processedItem.Notes = additionalNotes.trim()
+    }
+
+    filteredData.push(processedItem)
   }
+
+  // Sort by unit number (handling numbered units properly)
+  filteredData.sort((a, b) => {
+    // Extract base unit number (before any numbering)
+    const extractBase = (unit: string) => {
+      const match = unit.match(/^(.+?)\s+\d+$/)
+      return match ? match[1] : unit
+    }
+    
+    const extractNumber = (unit: string) => {
+      const match = unit.match(/\s+(\d+)$/)
+      return match ? parseInt(match[1]) : 0
+    }
+
+    const baseA = extractBase(a.Unit)
+    const baseB = extractBase(b.Unit)
+    const numA = parseInt(baseA)
+    const numB = parseInt(baseB)
+
+    // First sort by base unit number
+    if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+      return numA - numB
+    }
+
+    // If base units are the same, sort by the duplicate number
+    if (baseA === baseB) {
+      const dupNumA = extractNumber(a.Unit)
+      const dupNumB = extractNumber(b.Unit)
+      return dupNumA - dupNumB
+    }
+
+    // Otherwise, sort alphabetically
+    return a.Unit.localeCompare(b.Unit, undefined, { numeric: true, sensitivity: "base" })
+  })
+
+  console.log("CSV Preview: Final units:", filteredData.slice(0, 10).map(item => item.Unit))
+
+  // Save the selected cell data to localStorage for the notes section to use
+  console.log("Saving selected cells to localStorage:", cellSelections)
+  localStorage.setItem("selectedCells", JSON.stringify(cellSelections))
+  localStorage.setItem("selectedNotesColumns", JSON.stringify(notesColumns))
+
+  return {
+    installationData: filteredData,
+    toiletCount,
+  }
+}
 
   if (loading) {
     return (
@@ -406,28 +472,73 @@ export default function CsvPreviewPage() {
             <CardTitle>Additional Notes Columns</CardTitle>
           </CardHeader>
           <CardContent>
-            <Label>Select columns to include in notes:</Label>
+            <Label>Select columns to include ALL values in notes (optional):</Label>
+            <p className="text-xs text-muted-foreground mb-2">
+              Check columns below if you want ALL values from that column included in notes for every unit.
+              Some columns are auto-selected. You can also add individual cells by clicking on them in the preview.
+            </p>
+            
+            {/* Auto-selected columns summary */}
+            {(() => {
+              const autoSelectedCols = selectedNotesColumns.filter(col => 
+                ["Tub Leak Description", "Kitch Sink", "Bath Sink"].some(target => 
+                  col.toLowerCase().includes(target.toLowerCase()) || 
+                  target.toLowerCase().includes(col.toLowerCase())
+                )
+              )
+              
+              if (autoSelectedCols.length > 0) {
+                return (
+                  <div className="mb-3 p-2 bg-green-50 border border-green-200 rounded">
+                    <p className="text-xs font-medium text-green-800 mb-1">
+                      🎯 Auto-selected columns (all values included):
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {autoSelectedCols.map(col => (
+                        <span key={col} className="text-xs bg-green-600 text-white px-2 py-1 rounded">
+                          {getProperCase(col)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )
+              }
+              return null
+            })()}
             <div className="space-y-2 max-h-40 overflow-y-auto">
               {availableColumns
                 .filter((col) => col !== selectedUnitColumn)
-                .map((column) => (
-                  <div key={column} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`notes-${column}`}
-                      checked={selectedNotesColumns.includes(column)}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
-                          setSelectedNotesColumns((prev) => [...prev, column])
-                        } else {
-                          setSelectedNotesColumns((prev) => prev.filter((col) => col !== column))
-                        }
-                      }}
-                    />
-                    <Label htmlFor={`notes-${column}`} className="text-sm">
-                      {getProperCase(column)}
-                    </Label>
-                  </div>
-                ))}
+                .map((column) => {
+                  const isAutoSelected = selectedNotesColumns.includes(column) && 
+                    ["Tub Leak Description", "Kitch Sink", "Bath Sink"].some(target => 
+                      column.toLowerCase().includes(target.toLowerCase()) || 
+                      target.toLowerCase().includes(column.toLowerCase())
+                    )
+                  
+                  return (
+                    <div key={column} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`notes-${column}`}
+                        checked={selectedNotesColumns.includes(column)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedNotesColumns((prev) => [...prev, column])
+                          } else {
+                            setSelectedNotesColumns((prev) => prev.filter((col) => col !== column))
+                          }
+                        }}
+                      />
+                      <Label htmlFor={`notes-${column}`} className="text-sm flex items-center gap-2">
+                        {getProperCase(column)}
+                        {isAutoSelected && (
+                          <span className="text-xs bg-green-600 text-white px-1.5 py-0.5 rounded-full">
+                            Auto
+                          </span>
+                        )}
+                      </Label>
+                    </div>
+                  )
+                })}
             </div>
           </CardContent>
         </Card>
@@ -438,9 +549,9 @@ export default function CsvPreviewPage() {
             <CardTitle>Selected Cells</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground mb-2">
-              Click on cells in the preview to add them to notes for specific units.
-            </p>
+                      <p className="text-sm text-muted-foreground mb-2">
+            Click on cells in the preview to add them to notes for specific units. Auto-selected columns and individual cells are both included.
+          </p>
             <div className="space-y-2 max-h-40 overflow-y-auto">
               {Object.entries(selectedCells).map(([unit, cells]) => (
                 <div key={unit} className="text-sm">
@@ -465,7 +576,7 @@ export default function CsvPreviewPage() {
         <CardHeader>
           <CardTitle>Data Preview ({previewData.length} rows)</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Click on cells to add them to notes for specific units. The selected unit column is highlighted.
+            Click on cells to add them to notes for specific units. Auto-selected columns and individual cells are both included in the final report. The selected unit column is highlighted.
           </p>
         </CardHeader>
         <CardContent>
@@ -473,16 +584,37 @@ export default function CsvPreviewPage() {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-white">
                 <tr>
-                  {availableColumns.map((column) => (
-                    <th
-                      key={column}
-                      className={`text-left p-2 border-b font-medium ${
-                        column === selectedUnitColumn ? "bg-blue-100" : ""
-                      }`}
-                    >
-                      {getProperCase(column)}
-                    </th>
-                  ))}
+                  {availableColumns.map((column) => {
+                    const isUnitColumn = column === selectedUnitColumn
+                    const isAutoSelected = selectedNotesColumns.includes(column)
+                    
+                    return (
+                      <th
+                        key={column}
+                        className={`text-left p-2 border-b font-medium ${
+                          isUnitColumn ? "bg-blue-100" : ""
+                        } ${
+                          isAutoSelected ? "bg-green-100 border-l-4 border-l-green-500" : ""
+                        }`}
+                        title={
+                          isAutoSelected 
+                            ? "Auto-selected column - all values will be included in notes" 
+                            : isUnitColumn 
+                              ? "Unit identifier column" 
+                              : "Click cells to add to notes"
+                        }
+                      >
+                        <div className="flex items-center gap-2">
+                          {getProperCase(column)}
+                          {isAutoSelected && (
+                            <span className="text-xs bg-green-600 text-white px-1 py-0.5 rounded">
+                              Auto
+                            </span>
+                          )}
+                        </div>
+                      </th>
+                    )
+                  })}
                 </tr>
               </thead>
               <tbody>

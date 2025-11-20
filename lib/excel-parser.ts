@@ -28,6 +28,43 @@ export async function parseExcelFile(file: File): Promise<InstallationData[]> {
         console.log("Excel: Sheet name:", firstSheetName)
         console.log("Excel: Sheet range:", worksheet["!ref"])
 
+        // Check for merged cells
+        const merges = worksheet['!merges'] || []
+        console.log("Excel: Found", merges.length, "merged cell ranges")
+
+        // Helper function to check if a cell is part of a merged range
+        const isCellMerged = (rowIndex: number, colIndex: number) => {
+          for (const merge of merges) {
+            if (rowIndex >= merge.s.r && rowIndex <= merge.e.r &&
+                colIndex >= merge.s.c && colIndex <= merge.e.c) {
+              return {
+                isMerged: true,
+                mergeRange: merge,
+                isTopLeft: rowIndex === merge.s.r && colIndex === merge.s.c
+              }
+            }
+          }
+          return { isMerged: false }
+        }
+
+        // Helper function to get the value from a merged cell (always from top-left)
+        const getMergedCellValue = (rowIndex: number, colIndex: number) => {
+          for (const merge of merges) {
+            if (rowIndex >= merge.s.r && rowIndex <= merge.e.r &&
+                colIndex >= merge.s.c && colIndex <= merge.e.c) {
+              // Get value from the top-left cell of the merge
+              const topLeftAddr = XLSX.utils.encode_cell({ r: merge.s.r, c: merge.s.c })
+              const topLeftCell = worksheet[topLeftAddr]
+              return topLeftCell ? topLeftCell.v : undefined
+            }
+          }
+          
+          // Not in a merge, get the cell value normally
+          const cellAddr = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })
+          const cell = worksheet[cellAddr]
+          return cell ? cell.v : undefined
+        }
+
         // Convert the Excel sheet to CSV format
         const csvString = XLSX.utils.sheet_to_csv(worksheet, {
           FS: ",", // Field separator
@@ -87,44 +124,78 @@ export async function parseExcelFile(file: File): Promise<InstallationData[]> {
 
               const headers = Object.keys(results.data[0])
               const unitColumnName = findUnitColumn(headers)
+              const unitColumnIndex = headers.indexOf(unitColumnName)
 
               // Apply the same filtering logic as CSV files
               const filteredData = []
 
               for (let i = 0; i < results.data.length; i++) {
                 const row: any = results.data[i]
+                const excelRowIndex = i + 1 // +1 because CSV parsing skips header row
 
                 // Use the pre-determined unit column
-                const unitValue = row[unitColumnName]
+                let unitValue = row[unitColumnName]
+
+                // Check if the unit cell is merged
+                const mergeInfo = isCellMerged(excelRowIndex, unitColumnIndex)
 
                 // Log each row for debugging
                 console.log(
-                  `Excel->CSV Row ${i + 1}: Unit column="${unitColumnName}", Unit value="${unitValue}" (type: ${typeof unitValue}, length: ${unitValue ? String(unitValue).length : "null"})`,
+                  `Excel->CSV Row ${i + 1}: Unit column="${unitColumnName}", Unit value="${unitValue}" (type: ${typeof unitValue}, length: ${unitValue ? String(unitValue).length : "null"}, merged: ${mergeInfo.isMerged})`,
                 )
 
-                // Check if unit is truly empty - be very strict about this
-                if (
-                  unitValue === undefined ||
-                  unitValue === null ||
-                  unitValue === "" ||
-                  (typeof unitValue === "string" && unitValue.trim() === "") ||
-                  String(unitValue).trim() === ""
-                ) {
-                  console.log(
-                    `Excel->CSV STOPPING: Found empty unit at row ${i + 1}. Unit value: "${unitValue}". Processed ${filteredData.length} valid rows.`,
-                  )
-                  break // Stop processing immediately when we find an empty unit
+                // Handle merged cells
+                if (mergeInfo.isMerged) {
+                  console.log(`Row ${i + 1}: Unit cell is merged`, mergeInfo)
+                  
+                  if (!mergeInfo.isTopLeft) {
+                    // This is a merged cell but not the top-left, get the value from top-left
+                    const mergedValue = getMergedCellValue(excelRowIndex, unitColumnIndex)
+                    unitValue = mergedValue
+                    console.log(`Row ${i + 1}: Using merged cell value: "${unitValue}"`)
+                  }
+                  
+                  // For merged cells, don't treat empty as "end of data"
+                  if (
+                    unitValue === undefined ||
+                    unitValue === null ||
+                    unitValue === "" ||
+                    (typeof unitValue === "string" && unitValue.trim() === "") ||
+                    String(unitValue).trim() === ""
+                  ) {
+                    console.log(`Row ${i + 1}: Merged cell is empty, continuing...`)
+                    continue // Skip this row but keep processing
+                  }
+                } else {
+                  // Check if unit is truly empty - be very strict about this
+                  if (
+                    unitValue === undefined ||
+                    unitValue === null ||
+                    unitValue === "" ||
+                    (typeof unitValue === "string" && unitValue.trim() === "") ||
+                    String(unitValue).trim() === ""
+                  ) {
+                    console.log(
+                      `Excel->CSV STOPPING: Found empty unit at row ${i + 1}. Unit value: "${unitValue}". Processed ${filteredData.length} valid rows.`,
+                    )
+                    break // Stop processing immediately when we find an empty unit
+                  }
                 }
 
                 // Convert to string and trim for further checks
                 const trimmedUnit = String(unitValue).trim()
 
-                // If after trimming it's empty, stop
+                // If after trimming it's empty, stop or continue based on merge status
                 if (trimmedUnit === "") {
-                  console.log(
-                    `Excel->CSV STOPPING: Found empty unit after trimming at row ${i + 1}. Original: "${unitValue}". Processed ${filteredData.length} valid rows.`,
-                  )
-                  break
+                  if (mergeInfo.isMerged) {
+                    console.log(`Row ${i + 1}: Merged cell is empty after trimming, continuing...`)
+                    continue
+                  } else {
+                    console.log(
+                      `Excel->CSV STOPPING: Found empty unit after trimming at row ${i + 1}. Original: "${unitValue}". Processed ${filteredData.length} valid rows.`,
+                    )
+                    break
+                  }
                 }
 
                 // Filter out rows with non-apartment values (often headers, totals, etc.) but continue processing
@@ -202,39 +273,91 @@ export async function parseExcelFile(file: File): Promise<InstallationData[]> {
         })
 
         // Convert the parsed data to the expected format
-        const formattedData = parsedCsvData.map((row: any) => {
-          const formattedRow: Record<string, string> = {}
-
-          Object.keys(row).forEach((key) => {
-            // Handle null/undefined values
-            let value = row[key]
-            if (value === null || value === undefined) {
-              value = ""
-            } else {
-              value = String(value).trim()
-            }
-
-            // Preserve the original column name
-            formattedRow[key] = value
-
-            // Also add lowercase version for case-insensitive matching
-            formattedRow[key.toLowerCase()] = value
-
-            // Add common variations of column names for better matching
-            if (key.toLowerCase().includes("kitchen") && key.toLowerCase().includes("aerator")) {
-              formattedRow["Kitchen Aerator"] = value
-            }
-            if (key.toLowerCase().includes("bathroom") && key.toLowerCase().includes("aerator")) {
-              formattedRow["Bathroom aerator"] = value
-            }
-            if (key.toLowerCase().includes("shower") && key.toLowerCase().includes("head")) {
-              formattedRow["Shower Head"] = value
-            }
-          })
-
-          return formattedRow as InstallationData
+        // First pass: count occurrences of each unit name
+        const unitCounts = new Map<string, number>()
+        parsedCsvData.forEach((row: any) => {
+          const headers = Object.keys(row)
+          const unitColumnName = headers.find(h => h.toLowerCase().includes("unit")) || headers[0]
+          const unitValue = String(row[unitColumnName] || "").trim()
+          if (unitValue) {
+            unitCounts.set(unitValue, (unitCounts.get(unitValue) || 0) + 1)
+          }
         })
 
+        // Second pass: track current count for numbering
+        const currentCounts = new Map<string, number>()
+        
+const formattedData = parsedCsvData.map((row: any, index: number) => {
+  const formattedRow: Record<string, string> = {}
+
+  // First pass: identify the unit column and its value
+  const headers = Object.keys(row)
+  const unitColumnName = headers.find(h => h.toLowerCase().includes("unit")) || headers[0]
+  let unitValue = String(row[unitColumnName] || "").trim()
+  
+  // Convert unit name to title case (each word capitalized)
+  if (unitValue) {
+    unitValue = unitValue
+      .split(/\s+/)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ')
+  }
+
+  // Track and number duplicate units only if there are multiple
+  let finalUnitValue = unitValue  // ← STORE IN SEPARATE VARIABLE
+  if (unitValue) {
+    const totalCount = unitCounts.get(unitValue) || 0
+    const currentCount = currentCounts.get(unitValue) || 0
+    currentCounts.set(unitValue, currentCount + 1)
+    
+    // Only add numbering if there are multiple units with this name
+    if (totalCount > 1) {
+      finalUnitValue = `${unitValue} ${currentCount + 1}`  // ← USE finalUnitValue
+      console.log(`Excel->CSV: Numbering duplicate unit: "${finalUnitValue}"`)
+    }
+  }
+
+  Object.keys(row).forEach((key) => {
+  // Handle null/undefined values
+  let value = row[key]
+  if (value === null || value === undefined) {
+    value = ""
+  } else {
+    value = String(value).trim()
+  }
+
+  // If this is the unit column, use the numbered value
+  if (key === unitColumnName) {
+    value = finalUnitValue
+  }
+
+  // Preserve the original column name
+  formattedRow[key] = value
+
+  // Also add lowercase version for case-insensitive matching
+  
+
+  // Add common variations of column names for better matching
+  if (key.toLowerCase().includes("kitchen") && key.toLowerCase().includes("aerator")) {
+    formattedRow["Kitchen Aerator"] = value
+  }
+
+  if (key.toLowerCase().includes("shower") && key.toLowerCase().includes("head")) {
+    formattedRow["Shower Head"] = value
+  }
+})
+
+// ← CRITICAL: Ensure ALL unit column variations have the numbered value
+formattedRow["Unit"] = finalUnitValue
+formattedRow[unitColumnName] = finalUnitValue  // Original column name
+if (unitColumnName.toLowerCase() !== "unit") {
+  formattedRow["unit"] = finalUnitValue  // Lowercase variation
+  formattedRow[unitColumnName.toLowerCase()] = finalUnitValue  // Lowercase original
+}
+
+return formattedRow as InstallationData
+
+        })
         console.log("Excel->CSV: Final formatted data sample:", formattedData.slice(0, 3))
         console.log("Excel->CSV: Final formatted data last 3:", formattedData.slice(-3))
 

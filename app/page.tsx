@@ -160,6 +160,12 @@ function UploadForm() {
       console.log("[v0] Starting Excel file processing...")
       const installationData = await parseExcelFile(file)
 
+      console.log("[DEBUG] Raw parsed data length:", installationData.length)
+console.log("[DEBUG] First 3 rows:", installationData.slice(0, 3))
+console.log("[DEBUG] Last 3 rows:", installationData.slice(-3))
+console.log("[DEBUG] Checking for duplicates - unique units:", 
+  [...new Set(installationData.map(item => item.Unit))].length)
+
       if (installationData.length === 0) {
         alert("No valid installation data found in the file")
         setIsProcessing(false)
@@ -175,69 +181,69 @@ function UploadForm() {
         date: new Date().toLocaleDateString(),
       }
 
-             const toiletCount = installationData.reduce((total, item) => {
-         // First, try to find "Toilets Installed:" columns (these are the primary source)
-         const toiletsInstalledColumns = Object.keys(item).filter(key => 
-           key.startsWith("Toilets Installed:") || key.startsWith("toilets installed:")
-         )
-         
-         let toiletQty = 0
-         
-         // Check if any of these columns contain a total number in the header
-         for (const col of toiletsInstalledColumns) {
-           // Extract the number from the column header (e.g., "Toilets Installed: 361" -> 361)
-           const headerMatch = col.match(/Toilets Installed:\s*(\d+)/i)
-           if (headerMatch) {
-             const headerNumber = parseInt(headerMatch[1], 10)
-             if (!isNaN(headerNumber)) {
-               console.log(`[v0] Found total toilet count in header "${col}": ${headerNumber}`)
-               return headerNumber // Return this total immediately, don't sum rows
-             }
-           }
-         }
-         
-         // If no header number found, sum up the values from unit rows only
-         // Skip rows that look like headers or totals (e.g., no Unit field, or Unit is "Total")
-         if (item.Unit && item.Unit.toString().toLowerCase() !== 'total' && !item.Unit.toString().toLowerCase().includes('total')) {
-           for (const col of toiletsInstalledColumns) {
-             const value = item[col]
-             if (value !== undefined && value !== null && value !== "") {
-               const parsed = Number.parseInt(String(value), 10)
-               if (!isNaN(parsed)) {
-                 toiletQty += parsed
-                 console.log(`[v0] Found toilet count in unit row "${item.Unit}", column "${col}": ${value} -> ${parsed}`)
-               }
-             }
-           }
-           
-           // If no "Toilets Installed:" columns found, try generic toilet columns as fallback
-           if (toiletQty === 0) {
-             const possibleColumns = ["Toilet", "toilet", "TOILET", "Toilets", "toilets", "TOILETS"]
-             
-             for (const col of possibleColumns) {
-               if (item[col] !== undefined && item[col] !== null && item[col] !== "") {
-                 const parsed = Number.parseInt(String(item[col]), 10)
-                 if (!isNaN(parsed)) {
-                   toiletQty = parsed
-                   console.log(`[v0] Found toilet count in fallback column "${col}": ${item[col]} -> ${parsed}`)
-                   break
-                 }
-               }
-             }
-           }
-         } else {
-           console.log(`[v0] Skipping header/total row: ${item.Unit}`)
-         }
-         
-         console.log("[v0] Toilet count calculation for unit:", {
-           unit: item.Unit || "Unknown",
-           toiletsInstalledColumns: toiletsInstalledColumns,
-           toiletQty: toiletQty,
-           runningTotal: total + toiletQty
-         })
-         
-         return total + toiletQty
-       }, 0)
+      const toiletCount = installationData.reduce((total, item) => {
+        // First, try to find "Toilets Installed:" columns (these are the primary source)
+        const toiletsInstalledColumns = Object.keys(item).filter(key => 
+          key.startsWith("Toilets Installed") || key.startsWith("toilets installed") || key.startsWith("toilets replaced")|| key.startsWith("Toilets Replaced")
+        )
+        
+        let toiletQty = 0
+        
+        // Check if any of these columns contain a total number in the header
+        for (const col of toiletsInstalledColumns) {
+          // Extract the number from the column header (e.g., "Toilets Installed: 361" -> 361)
+          const headerMatch = col.match(/Toilets Installed:\s*(\d+)/i)
+          if (headerMatch) {
+            const headerNumber = parseInt(headerMatch[1], 10)
+            if (!isNaN(headerNumber)) {
+              console.log(`[v0] Found total toilet count in header "${col}": ${headerNumber}`)
+              return headerNumber // Return this total immediately, don't sum rows
+            }
+          }
+        }
+        
+        // If no header number found, sum up the values from unit rows only
+        // Skip rows that look like headers or totals (e.g., no Unit field, or Unit is "Total")
+        if (item.Unit && item.Unit.toString().toLowerCase() !== 'total' && !item.Unit.toString().toLowerCase().includes('total')) {
+          for (const col of toiletsInstalledColumns) {
+            const value = item[col]
+            if (value !== undefined && value !== null && value !== "") {
+              const parsed = Number.parseInt(String(value), 10)
+              if (!isNaN(parsed)) {
+                toiletQty += parsed
+                console.log(`[v0] Found toilet count in unit row "${item.Unit}", column "${col}": ${value} -> ${parsed}`)
+              }
+            }
+          }
+          
+          // If no "Toilets Installed:" columns found, try generic toilet columns as fallback
+          if (toiletQty === 0) {
+            const possibleColumns = ["Toilet", "toilet", "TOILET", "Toilets", "toilets", "TOILETS"]
+            
+            for (const col of possibleColumns) {
+              if (item[col] !== undefined && item[col] !== null && item[col] !== "") {
+                const parsed = Number.parseInt(String(item[col]), 10)
+                if (!isNaN(parsed)) {
+                  toiletQty = parsed
+                  console.log(`[v0] Found toilet count in fallback column "${col}": ${item[col]} -> ${parsed}`)
+                  break
+                }
+              }
+            }
+          }
+        } else {
+          console.log(`[v0] Skipping header/total row: ${item.Unit}`)
+        }
+        
+        console.log("[v0] Toilet count calculation for unit:", {
+          unit: item.Unit || "Unknown",
+          toiletsInstalledColumns: toiletsInstalledColumns,
+          toiletQty: toiletQty,
+          runningTotal: total + toiletQty
+        })
+        
+        return total + toiletQty
+      }, 0)
 
       console.log("[v0] Final toilet count calculated:", toiletCount)
 
@@ -261,6 +267,7 @@ function UploadForm() {
         installationDataSaved: !!verifyData.installationData,
         customerInfoSaved: !!verifyData.customerInfo,
         toiletCountSaved: !!verifyData.toiletCount,
+        toiletCountValue: verifyData.toiletCount,
         installationDataLength: verifyData.installationData ? JSON.parse(verifyData.installationData).length : 0,
       })
 
@@ -287,15 +294,15 @@ function UploadForm() {
         reader.onload = (e) => {
           const imageData = e.target?.result as string
           localStorage.setItem("coverImage", imageData)
-          console.log("[v0] Cover image saved, navigating to report view...")
-          // Navigate to report view instead of reloading
-          router.push("/report")
+          console.log("[v0] Cover image saved, navigating to CSV preview...")
+          // Navigate to CSV preview instead of report view
+          router.push("/csv-preview")
         }
         reader.readAsDataURL(coverImage)
       } else {
-        console.log("[v0] No cover image, navigating to report view...")
-        // Navigate to report view instead of reloading
-        router.push("/report")
+        console.log("[v0] No cover image, navigating to CSV preview...")
+        // Navigate to CSV preview instead of report view
+        router.push("/csv-preview")
       }
     } catch (error) {
       console.error("Error processing file:", error)
@@ -312,6 +319,25 @@ function UploadForm() {
         <CardContent className="pt-6">
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-2xl font-bold">Water Installation Report Generator</h1>
+            {(() => {
+              try {
+                const hasData = localStorage.getItem("rawInstallationData") && localStorage.getItem("customerInfo")
+                if (hasData) {
+                  return (
+                    <Button 
+                      variant="outline" 
+                      onClick={() => router.push("/csv-preview")}
+                      size="sm"
+                    >
+                      📊 Data Preview
+                    </Button>
+                  )
+                }
+                return null
+              } catch (error) {
+                return null
+              }
+            })()}
           </div>
 
           {processedData && (
@@ -433,6 +459,32 @@ function UploadForm() {
               )}
             </Button>
           </form>
+          
+          {/* CSV Preview Button - only show if there's data in localStorage */}
+          {(() => {
+            try {
+              const hasData = localStorage.getItem("rawInstallationData") && localStorage.getItem("customerInfo")
+              if (hasData) {
+                return (
+                  <div className="mt-4 text-center">
+                    <Button 
+                      variant="outline" 
+                      onClick={() => router.push("/csv-preview")}
+                      className="w-full"
+                    >
+                      📊 Review & Configure Data
+                    </Button>
+                    <p className="text-sm text-muted-foreground mt-2">
+                      Review uploaded data and configure how it should be processed
+                    </p>
+                  </div>
+                )
+              }
+              return null
+            } catch (error) {
+              return null
+            }
+          })()}
         </CardContent>
       </Card>
     </div>
@@ -455,15 +507,22 @@ function ReportView({
   const router = useRouter()
   const [currentPage, setCurrentPage] = useState("cover")
   const [images, setImages] = useState<ImageData[]>([])
+  
+  // Get toilet count from context to ensure we're using the latest value
+  const { toiletCount: contextToiletCount } = useReportContext()
+  
+  // Use context toilet count if available, otherwise use prop
+  const effectiveToiletCount = contextToiletCount > 0 ? contextToiletCount : toiletCount
 
   useEffect(() => {
     console.log("[v0] REPORT VIEW COMPONENT RENDERED")
     console.log("[v0] Customer info available:", !!customerInfo)
     console.log("[v0] Installation data length:", installationData.length)
-    console.log("[v0] Toilet count received:", toiletCount)
-    console.log("[v0] Toilet count type:", typeof toiletCount)
+    console.log("[v0] Toilet count received as prop:", toiletCount)
+    console.log("[v0] Toilet count from context:", contextToiletCount)
+    console.log("[v0] Using effective toilet count:", effectiveToiletCount)
     console.log("[v0] Notes count:", notes.length)
-  }, [])
+  }, [toiletCount, contextToiletCount, effectiveToiletCount, customerInfo, installationData.length, notes.length])
 
   useEffect(() => {
     const storedImages = localStorage.getItem("reportImages")
@@ -511,13 +570,13 @@ function ReportView({
           <ExcelExportButton
             customerInfo={customerInfo}
             installationData={installationData}
-            toiletCount={toiletCount}
+            toiletCount={effectiveToiletCount}
             notes={notes}
           />
           <EnhancedPdfButton
             customerInfo={customerInfo}
             installationData={installationData}
-            toiletCount={toiletCount}
+            toiletCount={effectiveToiletCount}
             notes={notes}
           />
         </div>
@@ -529,12 +588,17 @@ function ReportView({
         </div>
         <div className="page-break"></div>
         <div className="report-page">
-          <ReportLetterPage customerInfo={customerInfo} toiletCount={toiletCount} isEditable={false} />
+          <ReportLetterPage customerInfo={customerInfo} toiletCount={effectiveToiletCount} isEditable={false} />
         </div>
         <div className="page-break"></div>
-        <ReportNotesPage notes={notes} isPreview={false} isEditable={false} />
+        <ReportNotesPage notes={notes} isPreview={false} isEditable={false}  />
         <div className="page-break"></div>
-        <ReportDetailPage installationData={installationData} isPreview={false} isEditable={false} />
+        <ReportDetailPage 
+          installationData={installationData} 
+          isPreview={true} 
+          isEditable={true}
+          unitTypeProp={customerInfo.unitType}
+        />
         <div className="page-break"></div>
         <ReportPicturesPage isPreview={false} isEditable={false} />
       </div>
@@ -554,7 +618,7 @@ function ReportView({
           </TabsContent>
 
           <TabsContent value="letter">
-            <ReportLetterPage customerInfo={customerInfo} toiletCount={toiletCount} isEditable={true} />
+            <ReportLetterPage customerInfo={customerInfo} toiletCount={effectiveToiletCount} isEditable={true} />
           </TabsContent>
 
           <TabsContent value="notes">
@@ -562,7 +626,7 @@ function ReportView({
           </TabsContent>
 
           <TabsContent value="details">
-            <ReportDetailPage installationData={installationData} isPreview={true} isEditable={true} />
+            <ReportDetailPage installationData={installationData} isPreview={true} isEditable={true} unitTypeProp={customerInfo.unitType} />
           </TabsContent>
 
           <TabsContent value="pictures">
@@ -659,98 +723,95 @@ function ReportContent() {
     }
   }
 
-    const loadData = useCallback(() => {
-    // Don't load data if we're intentionally going back to form
-    if (isNavigatingBack) {
-      console.log("[v0] Skipping data load - navigating back to form")
-      setLoading(false)
-      return
+const loadData = useCallback(() => {
+  // Don't load data if we're intentionally going back to form
+  if (isNavigatingBack) {
+    console.log("[v0] Skipping data load - navigating back to form")
+    setLoading(false)
+    return
+  }
+
+  try {
+    console.log("[v0] Loading data from localStorage for current session")
+
+    const storedInstallationData =
+      localStorage.getItem("installationData") || localStorage.getItem("rawInstallationData")
+    const storedToiletCount = localStorage.getItem("toiletCount")
+    const storedCustomerInfo = localStorage.getItem("customerInfo")
+
+    console.log("[v0] Raw localStorage check:", {
+      installationDataExists: !!storedInstallationData,
+      installationDataLength: storedInstallationData ? JSON.parse(storedInstallationData).length : 0,
+      toiletCountExists: !!storedToiletCount,
+      toiletCountRawValue: storedToiletCount,
+      customerInfoExists: !!storedCustomerInfo,
+      customerInfoLength: storedCustomerInfo ? storedCustomerInfo.length : 0,
+    })
+
+    let hasCustomerData = false
+    let hasInstallationDataLoaded = false
+
+    if (storedCustomerInfo) {
+      try {
+        const parsedCustomerInfo = JSON.parse(storedCustomerInfo)
+        setCustomerInfo(parsedCustomerInfo)
+        console.log("[v0] Loaded customerInfo into context:", parsedCustomerInfo.customerName)
+        hasCustomerData = true
+      } catch (error) {
+        console.error("[v0] Error parsing customerInfo:", error)
+      }
     }
 
-    try {
-      console.log("[v0] Loading data from localStorage for current session")
+    if (storedInstallationData) {
+      try {
+        const parsedInstallationData = JSON.parse(storedInstallationData)
 
-      const storedInstallationData =
-        localStorage.getItem("installationData") || localStorage.getItem("rawInstallationData")
-      const storedToiletCount = localStorage.getItem("toiletCount")
-      const storedCustomerInfo = localStorage.getItem("customerInfo")
+        console.log("[v0] Parsed installation data:", {
+          installationDataLength: parsedInstallationData.length,
+          firstUnit: parsedInstallationData[0]?.Unit || "N/A",
+        })
 
-      console.log("[v0] Raw localStorage check:", {
-        installationDataExists: !!storedInstallationData,
-        installationDataLength: storedInstallationData ? JSON.parse(storedInstallationData).length : 0,
-        toiletCountExists: !!storedToiletCount,
-        toiletCountRawValue: storedToiletCount,
-        customerInfoExists: !!storedCustomerInfo,
-        customerInfoLength: storedCustomerInfo ? storedCustomerInfo.length : 0,
-      })
+        if (parsedInstallationData.length > 0) {
+          setInstallationData(parsedInstallationData)
+          hasInstallationDataLoaded = true
 
-      let hasCustomerData = false
-      let hasInstallationDataLoaded = false
+          console.log("[v0] Set installation data:", parsedInstallationData.length, "items")
+          console.log("[v0] Toilet count will be loaded by context from localStorage")
 
-      if (storedCustomerInfo) {
-        try {
-          const parsedCustomerInfo = JSON.parse(storedCustomerInfo)
-          setCustomerInfo(parsedCustomerInfo)
-          console.log("[v0] Loaded customerInfo into context:", parsedCustomerInfo.customerName)
-          hasCustomerData = true
-        } catch (error) {
-          console.error("[v0] Error parsing customerInfo:", error)
-        }
-      }
+          const firstItem = parsedInstallationData[0]
+          const schema = Object.keys(firstItem).map((key) => ({
+            name: key,
+            type: typeof firstItem[key],
+            exampleValue: firstItem[key],
+          }))
+          setCsvSchema(schema)
+          setFilteredData(parsedInstallationData)
 
-      if (storedInstallationData) {
-        try {
-          const parsedInstallationData = JSON.parse(storedInstallationData)
-          const parsedToiletCount = storedToiletCount ? JSON.parse(storedToiletCount) : 0
+          const notes = parsedInstallationData
+            .filter(
+              (item: InstallationData) =>
+                item["Leak Issue Kitchen Faucet"] ||
+                item["Leak Issue Bath Faucet"] ||
+                item["Tub Spout/Diverter Leak Issue"] === "Light" ||
+                item["Tub Spout/Diverter Leak Issue"] === "Moderate" ||
+                item["Tub Spout/Diverter Leak Issue"] === "Heavy" ||
+                (item.Notes && item.Notes.trim() !== ""),
+            )
+            .map((item: InstallationData) => {
+              let noteText = ""
+              if (item["Leak Issue Kitchen Faucet"]) noteText += "Dripping from kitchen faucet. "
+              if (item["Leak Issue Bath Faucet"]) noteText += "Dripping from bathroom faucet. "
+              if (item["Tub Spout/Diverter Leak Issue"] === "Light")
+                noteText += "Light leak from tub spout/ diverter. "
+              if (item["Tub Spout/Diverter Leak Issue"] === "Moderate")
+                noteText += "Moderate leak from tub spout/diverter. "
+              if (item["Tub Spout/Diverter Leak Issue"] === "Heavy")
+                noteText += "Heavy leak from tub spout/ diverter. "
 
-          console.log("[v0] Parsed installation data:", {
-            installationDataLength: parsedInstallationData.length,
-            toiletCount: parsedToiletCount,
-            toiletCountType: typeof parsedToiletCount,
-            firstUnit: parsedInstallationData[0]?.Unit || "N/A",
-          })
+              if (item.Notes && item.Notes.trim() !== "") {
+                noteText += item.Notes + " "
+              }
 
-          if (parsedInstallationData.length > 0) {
-            setInstallationData(parsedInstallationData)
-            setToiletCount(parsedToiletCount)
-            hasInstallationDataLoaded = true
-
-            console.log("[v0] Set toilet count in context:", parsedToiletCount)
-            console.log("[v0] Set installation data:", parsedInstallationData.length, "items")
-
-            const firstItem = parsedInstallationData[0]
-            const schema = Object.keys(firstItem).map((key) => ({
-              name: key,
-              type: typeof firstItem[key],
-              exampleValue: firstItem[key],
-            }))
-            setCsvSchema(schema)
-            setFilteredData(parsedInstallationData)
-
-            const notes = parsedInstallationData
-              .filter(
-                (item: InstallationData) =>
-                  item["Leak Issue Kitchen Faucet"] ||
-                  item["Leak Issue Bath Faucet"] ||
-                  item["Tub Spout/Diverter Leak Issue"] === "Light" ||
-                  item["Tub Spout/Diverter Leak Issue"] === "Moderate" ||
-                  item["Tub Spout/Diverter Leak Issue"] === "Heavy" ||
-                  (item.Notes && item.Notes.trim() !== ""),
-              )
-              .map((item: InstallationData) => {
-                let noteText = ""
-                if (item["Leak Issue Kitchen Faucet"]) noteText += "Dripping from kitchen faucet. "
-                if (item["Leak Issue Bath Faucet"]) noteText += "Dripping from bathroom faucet. "
-                if (item["Tub Spout/Diverter Leak Issue"] === "Light")
-                  noteText += "Light leak from tub spout/ diverter. "
-                if (item["Tub Spout/Diverter Leak Issue"] === "Moderate")
-                  noteText += "Moderate leak from tub spout/diverter. "
-                if (item["Tub Spout/Diverter Leak Issue"] === "Heavy")
-                  noteText += "Heavy leak from tub spout/ diverter. "
-
-                if (item.Notes && item.Notes.trim() !== "") {
-                  noteText += item.Notes + " "
-                }
 
                 return {
                   unit: item.Unit,
